@@ -170,7 +170,8 @@ def summarize(rows: list[dict]) -> dict:
         groups.append(
             {
                 "distribution": distribution,
-                "ef_search": ef_search,
+                "requested_ef_search": ef_search,
+                "effective_ef_search": members[0]["effective_ef_search"],
                 "overfetch": overfetch,
                 "queries": len(members),
                 "mean_recall_at_k": float(np.mean([x["recall_at_k"] for x in members])),
