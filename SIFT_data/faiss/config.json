@@ -1,0 +1,13 @@
+{
+  "backend": "FAISS IndexHNSWFlat",
+  "source": "../sift-128-euclidean.hdf5::train",
+  "index_file": "hnsw_m32_efc200.index",
+  "vector_count": 1000000,
+  "dimensions": 128,
+  "dtype": "float32",
+  "metric": "squared_l2",
+  "id_mapping": "FAISS label equals SIFT train row ID",
+  "M": 32,
+  "efConstruction": 200,
+  "threads": 4
+}
