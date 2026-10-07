@@ -20,6 +20,7 @@ generate-sift-timestamps = "temporal_ann.timestamps:main"
 generate-sift-oracle = "temporal_ann.oracle:main"
 benchmark-sift-exact = "temporal_ann.exact_benchmark:main"
 build-faiss-hnsw = "temporal_ann.faiss_hnsw:main"
+benchmark-hnsw-idselector = "temporal_ann.hnsw_idselector:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

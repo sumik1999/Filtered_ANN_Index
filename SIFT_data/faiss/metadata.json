@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "backend": "FAISS IndexHNSWFlat",
+  "faiss_version": "1.15.1",
+  "source": "SIFT_data/sift-128-euclidean.hdf5",
+  "vector_count": 1000000,
+  "dimensions": 128,
+  "dtype": "float32",
+  "metric": "squared L2",
+  "id_mapping": "FAISS label equals SIFT train row ID",
+  "M": 32,
+  "efConstruction": 200,
+  "threads": 4,
+  "construction_seconds": 112.51271662500221,
+  "index_file": "hnsw_m32_efc200.index",
+  "index_size_bytes": 784129506,
+  "index_sha256": "e932f29d1f0cef47e9a347f2ed0cd1ee87e18c725a677b90a7f6aec9cbcd08f9"
+}

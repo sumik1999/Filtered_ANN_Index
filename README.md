@@ -49,6 +49,17 @@ Benchmark results are written to:
 
 Use `temporal-ann-benchmark --help` for all controls. For example, partition granularity and post-filter over-fetching are controlled by `--buckets` and `--overfetch`.
 
+## FAISS HNSW IDSelector baseline
+
+This branch adds `IDSelectorBitmap` filtering to a global `IndexHNSWFlat`. Each temporal predicate is converted into a one-million-bit eligibility bitmap while timestamps remain outside FAISS. Build the index and run the 10,000-query benchmark with:
+
+```bash
+build-faiss-hnsw
+benchmark-hnsw-idselector --ef-search 256
+```
+
+Use comma-separated values such as `--ef-search 128,256,512,1024` to measure the recall/latency trade-off. Bitmap construction and HNSW search latency are reported separately.
+
 ## Test
 
 ```bash
