@@ -28,4 +28,8 @@ SIFT_data/ground_truth_10000/*
 SIFT_data/sql/*
 !SIFT_data/sql/config.json
 !SIFT_data/sql/config_10000.json
+!SIFT_data/faiss/
+SIFT_data/faiss/*
+!SIFT_data/faiss/config.json
+!SIFT_data/faiss/metadata.json
 *.egg-info/

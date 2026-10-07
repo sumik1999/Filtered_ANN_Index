@@ -7,13 +7,19 @@ name = "temporal-ann-benchmark"
 version = "0.1.0"
 description = "Benchmark harness for temporal approximate nearest-neighbour search"
 requires-python = ">=3.10"
-dependencies = ["numpy>=1.24", "h5py>=3.11", "duckdb>=1.4"]
+dependencies = [
+  "numpy>=1.24",
+  "h5py>=3.11",
+  "duckdb>=1.4",
+  "faiss-cpu>=1.13",
+]
 
 [project.scripts]
 temporal-ann-benchmark = "temporal_ann.benchmark:main"
 generate-sift-timestamps = "temporal_ann.timestamps:main"
 generate-sift-oracle = "temporal_ann.oracle:main"
 benchmark-sift-exact = "temporal_ann.exact_benchmark:main"
+build-faiss-hnsw = "temporal_ann.faiss_hnsw:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
