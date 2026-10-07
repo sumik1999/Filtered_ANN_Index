@@ -49,6 +49,17 @@ Benchmark results are written to:
 
 Use `temporal-ann-benchmark --help` for all controls. For example, partition granularity and post-filter over-fetching are controlled by `--buckets` and `--overfetch`.
 
+## FAISS HNSW post-filter baseline
+
+This branch adds a global `IndexHNSWFlat` using squared L2. Timestamps remain external and are joined through the sequential FAISS/SIFT vector ID. Build the index and run the 10,000-query benchmark with:
+
+```bash
+build-faiss-hnsw
+benchmark-hnsw-post-filter --ef-search 256 --overfetch 10
+```
+
+Use comma-separated values such as `--ef-search 256,512` and `--overfetch 10,20,50` to measure recall/latency trade-offs.
+
 ## Test
 
 ```bash
