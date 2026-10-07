@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "status": "complete",
+  "source": {
+    "sift_file": "SIFT_data/sift-128-euclidean.hdf5",
+    "sift_sha256": "dd6f0a6ed6b7ebb8934680f861a33ed01ff33991eaee4fd60914d854a0ca5984",
+    "database_array": "train",
+    "query_array": "test"
+  },
+  "workload": {
+    "file": "SIFT_data/workloads/temporal_queries_10000.jsonl",
+    "sha256": "d93c7756afd2d9c90c6768fc911164c8fc804b1471447cab5e4469d9e92fa6c9",
+    "query_count": 10000,
+    "query_selection": "random without replacement from SIFT test, then fixed",
+    "seed": 7,
+    "total_width_per_query": 0.1,
+    "fragment_count": 4,
+    "fragment_width": 0.025,
+    "boolean_operator": "OR",
+    "overall_timeline_coverage": "[0, 1)"
+  },
+  "oracle": {
+    "algorithm": "exact filtered scan",
+    "distance": "squared Euclidean (squared L2)",
+    "max_k": 100,
+    "block_size": 65536,
+    "padding_neighbor_id": -1,
+    "padding_distance": "infinity"
+  },
+  "distributions": {
+    "uniform": {
+      "timestamp_file": "SIFT_data/timestamps/uniform_seed-7.npy",
+      "timestamp_sha256": "4afcbda6e78490fbca8df17eef5bca9b9a70d828b3ad4c4a8fc4935d4bc9c7e0",
+      "ground_truth_file": "uniform_ground_truth.npz",
+      "ground_truth_sha256": "92c33c0e3bd20c015bf85256a4cf6df1ea1f90561e3a66d9be52f86ace6ffff0",
+      "construction_seconds": 250.8679824169958,
+      "minimum_qualifying_count": 98838,
+      "maximum_qualifying_count": 101005,
+      "mean_selectivity": 0.1000276473
+    },
+    "poisson_clustered": {
+      "timestamp_file": "SIFT_data/timestamps/poisson_clustered_seed-7.npy",
+      "timestamp_sha256": "744b37b588a8f245f675b48d7422cbc435525f05e9a10eed20a306ef5806522b",
+      "ground_truth_file": "poisson_clustered_ground_truth.npz",
+      "ground_truth_sha256": "8e6890ee49c00aacc1e3854ed2aed5b35f4fae48b6fb20b845946d7f66fbe218",
+      "construction_seconds": 245.54774787500355,
+      "minimum_qualifying_count": 25815,
+      "maximum_qualifying_count": 426394,
+      "mean_selectivity": 0.1020682666
+    },
+    "zipf": {
+      "timestamp_file": "SIFT_data/timestamps/zipf_seed-7.npy",
+      "timestamp_sha256": "48e9c81373389472b76f15af68a16255ea07b2ec0b4a47ab580bac03ce4ec3aa",
+      "ground_truth_file": "zipf_ground_truth.npz",
+      "ground_truth_sha256": "cb83f9b9bd8ceb42c83b7037bd064e57771029c32cda1b3494e5c1b9f26eb4c2",
+      "construction_seconds": 133.033846792001,
+      "minimum_qualifying_count": 6399,
+      "maximum_qualifying_count": 708915,
+      "mean_selectivity": 0.0452582014
+    }
+  }
+}

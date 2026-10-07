@@ -1,0 +1,17 @@
+{
+  "method": "SQL temporal pre-filter followed by exact blocked L2 scan",
+  "sql_engine": "DuckDB",
+  "ann_index_used": false,
+  "database": "sift_timestamps.duckdb",
+  "workload": "../workloads/temporal_queries_10000.jsonl",
+  "ground_truth": "../ground_truth_10000",
+  "query_count_per_distribution": 10000,
+  "total_measurements": 30000,
+  "fragment_count": 4,
+  "total_width": 0.1,
+  "max_k": 100,
+  "distance": "squared_l2",
+  "vector_scan_block_size": 65536,
+  "duckdb_threads": 4,
+  "result_directory": "../../results/sift_exact_10000"
+}

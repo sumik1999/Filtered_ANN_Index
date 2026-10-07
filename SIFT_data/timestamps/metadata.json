@@ -1,0 +1,110 @@
+{
+  "schema_version": 1,
+  "source_vectors": "../sift-128-euclidean.hdf5::train",
+  "assignment": "independent of vector values; array position equals train vector ID",
+  "seed": 7,
+  "normalized_range": {
+    "start_inclusive": 0.0,
+    "end_exclusive": 1.0
+  },
+  "calendar_mapping": {
+    "start_inclusive": "2023-01-01T00:00:00+00:00",
+    "end_exclusive": "2024-01-01T00:00:00+00:00",
+    "duration_seconds": 31536000,
+    "note": "Calendar mapping is metadata only; benchmark files remain normalized float64."
+  },
+  "temporal_bins": 1024,
+  "distributions": {
+    "uniform": {
+      "file": "uniform_seed-7.npy",
+      "parameters": {},
+      "summary": {
+        "count": 1000000,
+        "dtype": "float64",
+        "minimum": 1.9636254988686375e-07,
+        "maximum": 0.9999999652809382,
+        "mean": 0.5003772834206928,
+        "standard_deviation": 0.288463139869145,
+        "quantiles": {
+          "0.01": 0.01012813286394585,
+          "0.25": 0.25058155283228656,
+          "0.50": 0.5006474712468174,
+          "0.75": 0.7504561563044381,
+          "0.99": 0.9899862735081458
+        },
+        "bin_count_min": 881,
+        "bin_count_max": 1078,
+        "bin_count_coefficient_of_variation": 0.032411182267853174
+      },
+      "sha256": "4afcbda6e78490fbca8df17eef5bca9b9a70d828b3ad4c4a8fc4935d4bc9c7e0"
+    },
+    "poisson_clustered": {
+      "file": "poisson_clustered_seed-7.npy",
+      "parameters": {
+        "process": "non-homogeneous Poisson process conditioned on total count",
+        "baseline_rate": 1.0,
+        "high_density_regions": [
+          {
+            "start": 0.1,
+            "end": 0.15,
+            "rate_multiplier": 10.0
+          },
+          {
+            "start": 0.4,
+            "end": 0.5,
+            "rate_multiplier": 20.0
+          },
+          {
+            "start": 0.8,
+            "end": 0.83,
+            "rate_multiplier": 15.0
+          }
+        ]
+      },
+      "summary": {
+        "count": 1000000,
+        "dtype": "float64",
+        "minimum": 2.9535356344143017e-06,
+        "maximum": 0.9999972301887111,
+        "mean": 0.4643603610943829,
+        "standard_deviation": 0.2248455767029866,
+        "quantiles": {
+          "0.01": 0.03767212460792047,
+          "0.25": 0.40383079671718675,
+          "0.50": 0.4512103591453086,
+          "0.75": 0.49872489200574643,
+          "0.99": 0.9624335513197153
+        },
+        "bin_count_min": 212,
+        "bin_count_max": 5352,
+        "bin_count_coefficient_of_variation": 1.6369950363565553
+      },
+      "sha256": "744b37b588a8f245f675b48d7422cbc435525f05e9a10eed20a306ef5806522b"
+    },
+    "zipf": {
+      "file": "zipf_seed-7.npy",
+      "parameters": {
+        "exponent": 1.2
+      },
+      "summary": {
+        "count": 1000000,
+        "dtype": "float64",
+        "minimum": 1.6842302000752082e-09,
+        "maximum": 0.9999969758543799,
+        "mean": 0.07132522048308895,
+        "standard_deviation": 0.16383833181813343,
+        "quantiles": {
+          "0.01": 4.261574980592448e-05,
+          "0.25": 0.0011650952815063797,
+          "0.50": 0.00601755861780723,
+          "0.75": 0.04337328157566423,
+          "0.99": 0.8425837635057055
+        },
+        "bin_count_min": 43,
+        "bin_count_max": 230720,
+        "bin_count_coefficient_of_variation": 8.616950831486506
+      },
+      "sha256": "48e9c81373389472b76f15af68a16255ea07b2ec0b4a47ab580bac03ce4ec3aa"
+    }
+  }
+}

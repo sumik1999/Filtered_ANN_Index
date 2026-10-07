@@ -1,0 +1,53 @@
+{
+  "dataset": "SIFT1M",
+  "source_array": "sift-128-euclidean.hdf5::train",
+  "output_directory": "SIFT_data/timestamps",
+  "count": 1000000,
+  "dtype": "float64",
+  "seed": 7,
+  "normalized_range": {
+    "start_inclusive": 0.0,
+    "end_exclusive": 1.0
+  },
+  "calendar_mapping": {
+    "year": 2023,
+    "timezone": "UTC"
+  },
+  "assignment": {
+    "vector_time_correlation": "none",
+    "array_position": "SIFT train vector ID"
+  },
+  "temporal_bins": 1024,
+  "distributions": {
+    "uniform": {
+      "enabled": true
+    },
+    "poisson_clustered": {
+      "enabled": true,
+      "process": "non-homogeneous Poisson process conditioned on total count",
+      "baseline_rate": 1.0,
+      "high_density_regions": [
+        {
+          "start": 0.1,
+          "end": 0.15,
+          "rate_multiplier": 10.0
+        },
+        {
+          "start": 0.4,
+          "end": 0.5,
+          "rate_multiplier": 20.0
+        },
+        {
+          "start": 0.8,
+          "end": 0.83,
+          "rate_multiplier": 15.0
+        }
+      ]
+    },
+    "zipf": {
+      "enabled": true,
+      "exponent": 1.2,
+      "jitter_within_bins": true
+    }
+  }
+}

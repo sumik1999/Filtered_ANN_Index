@@ -1,0 +1,32 @@
+{
+  "name": "SIFT1M",
+  "source_page": "https://www.tensorflow.org/datasets/catalog/sift1m",
+  "download_url": "https://ann-benchmarks.com/sift-128-euclidean.hdf5",
+  "local_file": "sift-128-euclidean.hdf5",
+  "file_size_bytes": 525128288,
+  "sha256": "dd6f0a6ed6b7ebb8934680f861a33ed01ff33991eaee4fd60914d854a0ca5984",
+  "distance_metric": "euclidean",
+  "timestamp_field": null,
+  "arrays": {
+    "train": {
+      "role": "database",
+      "shape": [1000000, 128],
+      "dtype": "float32"
+    },
+    "test": {
+      "role": "queries",
+      "shape": [10000, 128],
+      "dtype": "float32"
+    },
+    "neighbors": {
+      "role": "100 exact database-neighbor IDs per query",
+      "shape": [10000, 100],
+      "dtype": "int32"
+    },
+    "distances": {
+      "role": "Euclidean distances corresponding to neighbors",
+      "shape": [10000, 100],
+      "dtype": "float32"
+    }
+  }
+}

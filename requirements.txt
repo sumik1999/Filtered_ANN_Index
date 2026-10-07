@@ -1,0 +1,51 @@
+Project 3: Temporal Approximate Nearest-Neighbour Search
+
+Project goal
+
+The goal of this project is to design and evaluate approximate nearest-neighbour search over timestamped embeddings. Each stored object has the form x_i = (v_i, t_i)
+
+where v_i is an embedding and t_i is its timestamp. Given a query embedding q, an integer k, and a temporal condition T, the system must return the k nearest vectors among the objects whose timestamps satisfy T.
+
+The temporal condition may be a single interval or a Boolean expression over intervals, for example:
+
+T=A or T=A || (B & C)
+
+The project should determine how temporal selectivity, interval fragmentation, and correlation between time and vector distribution affect query latency, recall, and index size.
+
+What to implement
+
+Implement the following baselines:
+
+Temporal pre-filtering: Identify all objects satisfying T, followed by exact vector search over the qualifying objects.
+ANN post-filtering: Search a global ANN index using an over-fetching factor and discard candidates whose timestamps do not satisfy T.
+Fixed temporal partitioning: Divide the timeline into fixed-size buckets and build a separate ANN index for each bucket.
+Students must then design and implement one improved temporal ANN organization. One possible design is a hierarchical or multi-resolution temporal index in which:
+
+leaf indexes cover small time intervals;
+indexes at higher levels cover progressively larger intervals;
+a temporal condition is decomposed into a small collection of indexed intervals; and
+candidates from the selected indexes are merged to obtain the final top-k result.
+The query interface must support:
+
+a single time range;
+unions and intersections of time ranges;
+different values of k; and
+exact ground-truth computation for recall measurement.
+The evaluation must vary:
+
+the width and selectivity of the temporal condition;
+the number of disjoint intervals;
+k;
+temporal data density;
+correlation between timestamp and vector distribution; and
+temporal partition granularity.
+Students must measure recall@k, query latency, number of candidates examined, index size, and index-construction time. The primary scope is a read-only dataset; dynamic insertion and deletion are not required.
+
+Report structure
+
+Introduction and problem definition: Timestamped embeddings, temporal predicates, and the required top-k semantics.
+Baselines and proposed design: Query-processing strategies, temporal index organization, and interval decomposition.
+Implementation: ANN backend, candidate retrieval and merging, Boolean temporal conditions, and correctness oracle.
+Experimental methodology: Datasets, temporal workload generation, correlation settings, baselines, and metrics.
+Results and analysis: Recall-latency trade-offs, effects of range width and fragmentation, and storage/build overhead.
+Conclusion.

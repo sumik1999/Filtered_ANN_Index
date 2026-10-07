@@ -1,0 +1,30 @@
+{
+  "dataset": "SIFT1M",
+  "database_array": "sift-128-euclidean.hdf5::train",
+  "query_array": "sift-128-euclidean.hdf5::test",
+  "timestamp_distributions": [
+    "uniform",
+    "poisson_clustered",
+    "zipf"
+  ],
+  "query_count": 1000,
+  "query_selection": {
+    "method": "random_without_replacement",
+    "seed": 7
+  },
+  "temporal_predicate": {
+    "normalized_range": [0.0, 1.0],
+    "interval_semantics": "half-open [start, end)",
+    "total_width_per_query": 0.1,
+    "fragment_count": 4,
+    "fragment_width": 0.025,
+    "boolean_operator": "OR",
+    "overall_workload_coverage": "[0, 1)"
+  },
+  "oracle": {
+    "algorithm": "exact_filtered_scan",
+    "distance": "squared_l2",
+    "max_k": 100,
+    "scan_block_size": 65536
+  }
+}
