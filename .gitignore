@@ -33,3 +33,19 @@ SIFT_data/faiss/*
 !SIFT_data/faiss/config.json
 !SIFT_data/faiss/metadata.json
 *.egg-info/
+
+# Twitter/X source IDs, hydrated content, embeddings, and benchmark artifacts.
+Twitter_data/ids/*
+!Twitter_data/ids/.gitkeep
+Twitter_data/raw/*
+!Twitter_data/raw/.gitkeep
+Twitter_data/processed/*
+!Twitter_data/processed/.gitkeep
+Twitter_data/workloads/*
+!Twitter_data/workloads/.gitkeep
+!Twitter_data/workloads/QUERY_DATASET_DESIGN.md
+Twitter_data/sql/*
+!Twitter_data/sql/.gitkeep
+Twitter_data/ann/*
+!Twitter_data/ann/README.md
+!Twitter_data/ann/.gitkeep

@@ -14,6 +14,12 @@ dependencies = [
   "faiss-cpu>=1.13",
 ]
 
+[project.optional-dependencies]
+twitter = [
+  "huggingface-hub>=0.27",
+  "sentence-transformers>=3.3",
+]
+
 [project.scripts]
 temporal-ann-benchmark = "temporal_ann.benchmark:main"
 generate-sift-timestamps = "temporal_ann.timestamps:main"
@@ -21,6 +27,20 @@ generate-sift-oracle = "temporal_ann.oracle:main"
 benchmark-sift-exact = "temporal_ann.exact_benchmark:main"
 build-faiss-hnsw = "temporal_ann.faiss_hnsw:main"
 benchmark-hnsw-post-filter = "temporal_ann.hnsw_post_filter:main"
+build-fixed-hnsw = "temporal_ann.fixed_hnsw.cli:build_main"
+benchmark-fixed-hnsw = "temporal_ann.fixed_hnsw.cli:benchmark_main"
+download-twitter-dlt = "temporal_ann.twitter_data:download_main"
+prepare-twitter-dlt = "temporal_ann.twitter_data:prepare_main"
+embed-twitter-dlt = "temporal_ann.twitter_data:embed_main"
+benchmark-twitter-exact = "temporal_ann.twitter_data:benchmark_main"
+build-twitter-hnsw = "temporal_ann.twitter_ann.hnsw:build_main"
+benchmark-twitter-hnsw-post-filter = "temporal_ann.twitter_ann.hnsw:benchmark_main"
+generate-twitter-varied-workload = "temporal_ann.twitter_ann.workload:main"
+benchmark-twitter-varied-exact = "temporal_ann.twitter_ann.varied_benchmark:exact_main"
+benchmark-twitter-varied-global-hnsw = "temporal_ann.twitter_ann.varied_benchmark:global_main"
+build-twitter-bucket-hnsw = "temporal_ann.twitter_ann.varied_benchmark:build_main"
+benchmark-twitter-bucket-hnsw = "temporal_ann.twitter_ann.varied_benchmark:bucket_main"
+benchmark-twitter-adaptive = "temporal_ann.twitter_ann.varied_benchmark:adaptive_main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
