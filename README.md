@@ -160,6 +160,28 @@ benchmark-twitter-adaptive \
 The planner records whether every query uses exact pre-filtering, bucket HNSW,
 or global HNSW post-filtering.
 
+### Flat Rolling Temporal HNSW prototype
+
+The initial RT-HNSW prototype replays the earliest 100,000 Twitter vectors in
+stable timestamp order. FAISS HNSW is used only to generate online semantic
+construction candidates; query traversal uses separate persisted semantic,
+protected temporal, and periodic-gateway adjacency. Gateways are promoted every
+512 records. The search implementation uses strict in-range multi-source graph
+traversal and falls back to exact search at 5,000 eligible records.
+
+```bash
+build-twitter-rt-hnsw \
+  --vector-count 100000 \
+  --gateway-period 512 \
+  --semantic-degree 32 \
+  --ef-construction 200
+```
+
+The default output is `Twitter_data/ann/rolling_hnsw/flat_100k/`. This is a
+flat research prototype, not a production FAISS HNSW replacement: it has no
+adaptive gateways, range-aware pruning, late-arrival repair, expiration, or
+upper-layer temporal chains yet.
+
 ## Test
 
 ```bash

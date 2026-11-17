@@ -41,6 +41,7 @@ benchmark-twitter-varied-global-hnsw = "temporal_ann.twitter_ann.varied_benchmar
 build-twitter-bucket-hnsw = "temporal_ann.twitter_ann.varied_benchmark:build_main"
 benchmark-twitter-bucket-hnsw = "temporal_ann.twitter_ann.varied_benchmark:bucket_main"
 benchmark-twitter-adaptive = "temporal_ann.twitter_ann.varied_benchmark:adaptive_main"
+build-twitter-rt-hnsw = "temporal_ann.twitter_ann.rolling_hnsw:build_main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
