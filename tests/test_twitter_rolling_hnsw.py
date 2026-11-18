@@ -111,6 +111,21 @@ class TwitterRollingHNSWTests(unittest.TestCase):
             )
             self.assertGreater(result["range_edges_examined"], 0)
 
+    def test_multi_scale_range_edges_have_independent_budgets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "rolling_multi_range"
+            build_rolling_index(
+                self.vectors, self.timestamps, root,
+                replace(self.config, semantic_degree=1, range_degree_per_side=1,
+                        range_scales_hours="1,2,4"),
+                progress_every=0,
+            )
+            index = RollingTemporalHNSW(root, self.vectors)
+            self.assertEqual(index.range_left_neighbors.shape, (8, 3, 1))
+            self.assertEqual(index.range_right_neighbors.shape, (8, 3, 1))
+            self.assertEqual(index.manifest["range_scales_hours"], [1, 2, 4])
+            self.assertTrue(np.all(np.any(index.range_left_neighbors[1:] >= 0, axis=0)))
+
     def test_disjoint_intervals_merge_exact_components(self):
         with tempfile.TemporaryDirectory() as directory:
             index = self.build(directory)

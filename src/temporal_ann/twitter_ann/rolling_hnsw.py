@@ -29,6 +29,21 @@ class RollingBuildConfig:
     range_degree_per_side: int = 0
     range_candidate_count: int = 64
     range_window_hours: int = 720
+    range_scales_hours: str = ""
+
+    def range_scales(self) -> tuple[int, ...]:
+        if self.range_degree_per_side == 0:
+            return ()
+        if self.range_scales_hours.strip():
+            scales = tuple(sorted({
+                int(value.strip())
+                for value in self.range_scales_hours.split(",")
+                if value.strip()
+            }))
+            if not scales or any(value <= 0 for value in scales):
+                raise ValueError("range scales must be comma-separated positive hours")
+            return scales
+        return (self.range_window_hours,)
 
     def validate(self) -> None:
         values = (
@@ -41,6 +56,7 @@ class RollingBuildConfig:
             raise ValueError("rolling-HNSW parameters are invalid")
         if self.construction_candidates < self.semantic_degree:
             raise ValueError("construction_candidates must be at least semantic_degree")
+        self.range_scales()
 
 
 @dataclass(frozen=True)
@@ -145,18 +161,12 @@ def build_rolling_index(
     semantic_neighbors = np.full((count, config.semantic_degree), -1, dtype=np.int32)
     semantic_distances = np.full((count, config.semantic_degree), np.inf, dtype=np.float32)
     temporal_neighbors = np.full((count, 2), -1, dtype=np.int32)
-    range_left_neighbors = np.full(
-        (count, config.range_degree_per_side), -1, dtype=np.int32
-    )
-    range_right_neighbors = np.full(
-        (count, config.range_degree_per_side), -1, dtype=np.int32
-    )
-    range_left_scores = np.full(
-        (count, config.range_degree_per_side), np.inf, dtype=np.float32
-    )
-    range_right_scores = np.full(
-        (count, config.range_degree_per_side), np.inf, dtype=np.float32
-    )
+    range_scales = config.range_scales()
+    range_shape = (count, len(range_scales), config.range_degree_per_side)
+    range_left_neighbors = np.full(range_shape, -1, dtype=np.int32)
+    range_right_neighbors = np.full(range_shape, -1, dtype=np.int32)
+    range_left_scores = np.full(range_shape, np.inf, dtype=np.float32)
+    range_right_scores = np.full(range_shape, np.inf, dtype=np.float32)
     gateway_rows = np.full(count, -1, dtype=np.int32)
     max_gateways = count // config.gateway_period
     gateway_ids = np.empty(max_gateways, dtype=np.int32)
@@ -183,11 +193,13 @@ def build_rolling_index(
                 found_distances, found_ids = candidate_index.search(
                     vector, fetch, params=params
                 )
-                candidates = found_ids[0]
-                candidate_distances = found_distances[0]
-                valid = candidates >= 0
-                candidates = candidates[valid][:config.semantic_degree]
-                candidate_distances = candidate_distances[valid][:config.semantic_degree]
+                found_candidates = found_ids[0]
+                found_candidate_distances = found_distances[0]
+                valid = found_candidates >= 0
+                all_candidates = found_candidates[valid]
+                all_candidate_distances = found_candidate_distances[valid]
+                candidates = all_candidates[:config.semantic_degree]
+                candidate_distances = all_candidate_distances[:config.semantic_degree]
                 for neighbor, distance in zip(candidates, candidate_distances):
                     neighbor_id = int(neighbor)
                     value = float(distance)
@@ -203,31 +215,34 @@ def build_rolling_index(
                 temporal_neighbors[local_id, 0] = local_id - 1
                 temporal_neighbors[local_id - 1, 1] = local_id
 
-                if config.range_degree_per_side:
+                if range_scales:
                     current_timestamp = int(ordered_timestamps[local_id])
-                    window_start = current_timestamp - config.range_window_hours * 3_600_000
-                    first_recent = int(np.searchsorted(
-                        ordered_timestamps[:local_id], window_start, side="left"
-                    ))
-                    recent_population = local_id - first_recent
-                    recent_count = min(config.range_candidate_count, recent_population)
-                    if recent_count:
-                        recent = np.unique(np.linspace(
-                            first_recent, local_id - 1, recent_count, dtype=np.int64
+                    for scale_index, scale_hours in enumerate(range_scales):
+                        window_ms = scale_hours * 3_600_000
+                        window_start = current_timestamp - window_ms
+                        first_recent = int(np.searchsorted(
+                            ordered_timestamps[:local_id], window_start, side="left"
                         ))
-                    else:
-                        recent = np.empty(0, dtype=np.int64)
-                    # Always retain a small immediate chronological neighborhood.
-                    immediate = np.arange(max(first_recent, local_id - 16), local_id, dtype=np.int64)
-                    pool = np.unique(np.concatenate((
-                        np.asarray(candidates, dtype=np.int64), recent, immediate,
-                    )))
-                    if len(pool):
+                        recent_population = local_id - first_recent
+                        recent_count = min(config.range_candidate_count, recent_population)
+                        if recent_count:
+                            recent = np.unique(np.linspace(
+                                first_recent, local_id - 1, recent_count, dtype=np.int64
+                            ))
+                        else:
+                            recent = np.empty(0, dtype=np.int64)
+                        immediate = np.arange(
+                            max(first_recent, local_id - 16), local_id, dtype=np.int64
+                        )
+                        pool = np.unique(np.concatenate((
+                            np.asarray(all_candidates, dtype=np.int64), recent, immediate,
+                        )))
+                        if not len(pool):
+                            continue
                         pool_global_ids = global_ids[pool]
                         delta = np.asarray(vectors[pool_global_ids], dtype=np.float32) - vector[0]
                         range_distances = np.einsum("ij,ij->i", delta, delta)
                         gaps = current_timestamp - ordered_timestamps[pool]
-                        window_ms = config.range_window_hours * 3_600_000
                         coeligibility = np.maximum(0.0, 1.0 - gaps / window_ms)
                         valid_range = coeligibility > 0.0
                         pool = pool[valid_range]
@@ -235,20 +250,25 @@ def build_rolling_index(
                         coeligibility = coeligibility[valid_range]
                         scores = range_distances / (coeligibility + 1e-6)
                         selected_count = min(config.range_degree_per_side, len(pool))
-                        if selected_count:
-                            selected = np.argpartition(scores, selected_count - 1)[:selected_count]
-                            selected = selected[np.argsort(scores[selected], kind="stable")]
-                            for selected_position in selected:
-                                neighbor_id = int(pool[selected_position])
-                                score = float(scores[selected_position])
-                                _add_bounded_edge(
-                                    range_left_neighbors, range_left_scores,
-                                    local_id, neighbor_id, score,
-                                )
-                                _add_bounded_edge(
-                                    range_right_neighbors, range_right_scores,
-                                    neighbor_id, local_id, score,
-                                )
+                        if not selected_count:
+                            continue
+                        selected = np.argpartition(scores, selected_count - 1)[:selected_count]
+                        selected = selected[np.argsort(scores[selected], kind="stable")]
+                        left_neighbors = range_left_neighbors[:, scale_index, :]
+                        right_neighbors = range_right_neighbors[:, scale_index, :]
+                        left_scores = range_left_scores[:, scale_index, :]
+                        right_scores = range_right_scores[:, scale_index, :]
+                        for selected_position in selected:
+                            neighbor_id = int(pool[selected_position])
+                            score = float(scores[selected_position])
+                            _add_bounded_edge(
+                                left_neighbors, left_scores,
+                                local_id, neighbor_id, score,
+                            )
+                            _add_bounded_edge(
+                                right_neighbors, right_scores,
+                                neighbor_id, local_id, score,
+                            )
 
             if (local_id + 1) % config.gateway_period == 0:
                 row = gateway_count
@@ -325,6 +345,7 @@ def build_rolling_index(
             "source": source or {},
             "construction_seconds": time.perf_counter() - started,
             "gateway_count": gateway_count,
+            "range_scales_hours": list(range_scales),
             "files": files,
         }
         manifest["artifact_size_bytes"] = sum(
@@ -471,8 +492,8 @@ class RollingTemporalHNSW:
             edge_groups: list[tuple[str, np.ndarray]] = []
             if config.use_range_edges:
                 edge_groups.extend((
-                    ("range", self.range_left_neighbors[current]),
-                    ("range", self.range_right_neighbors[current]),
+                    ("range", self.range_left_neighbors[current].reshape(-1)),
+                    ("range", self.range_right_neighbors[current].reshape(-1)),
                 ))
             edge_groups.append(("semantic", self.semantic_neighbors[current]))
             gateway_row = int(self.gateway_rows[current])
@@ -627,6 +648,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--range-degree-per-side", type=int, default=0)
     parser.add_argument("--range-candidate-count", type=int, default=64)
     parser.add_argument("--range-window-hours", type=int, default=720)
+    parser.add_argument("--range-scales-hours", default="")
     parser.add_argument("--progress-every", type=int, default=5_000)
     parser.add_argument("--rebuild", action="store_true")
     return parser
@@ -648,6 +670,7 @@ def build_main() -> None:
         range_degree_per_side=args.range_degree_per_side,
         range_candidate_count=args.range_candidate_count,
         range_window_hours=args.range_window_hours,
+        range_scales_hours=args.range_scales_hours,
     )
     manifest = build_rolling_index(
         vectors, timestamps, args.output, config,

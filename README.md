@@ -204,9 +204,25 @@ benchmark-twitter-rt-hnsw \
   --output results/twitter_rt_hnsw_100k/range8_ef512
 ```
 
-The default workload output is `results/twitter_rt_hnsw_100k/`. This is a flat
-research prototype, not a production FAISS HNSW replacement: it has no adaptive
-gateways, late-arrival repair, expiration, or upper-layer temporal chains yet.
+For independent range budgets at the query-relevant temporal scales, use the
+multi-scale equal-nominal-degree configuration:
+
+```bash
+build-twitter-rt-hnsw \
+  --output Twitter_data/ann/rolling_hnsw/flat_100k_multiscale \
+  --semantic-degree 20 --range-degree-per-side 2 \
+  --range-scales-hours 24,168,720
+
+benchmark-twitter-rt-hnsw \
+  --index Twitter_data/ann/rolling_hnsw/flat_100k_multiscale \
+  --ef-search 512 \
+  --output results/twitter_rt_hnsw_100k/multiscale_ef512
+```
+
+The default workload output is `results/twitter_rt_hnsw_100k/`. This remains a
+flat research prototype, not a production FAISS HNSW replacement: it has no
+adaptive gateways, late-arrival repair, expiration, or upper-layer temporal
+chains yet.
 
 ## Test
 
