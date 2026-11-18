@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -90,6 +91,25 @@ class TwitterRollingHNSWTests(unittest.TestCase):
             )
             self.assertEqual(semantic_only["temporal_edges_examined"], 0)
             self.assertEqual(semantic_only["gateway_edges_examined"], 0)
+
+    def test_range_edges_use_separate_left_and_right_budgets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "rolling_range"
+            build_rolling_index(
+                self.vectors, self.timestamps, root,
+                replace(self.config, semantic_degree=1, range_degree_per_side=2),
+                progress_every=0,
+            )
+            index = RollingTemporalHNSW(root, self.vectors)
+            self.assertTrue(np.any(index.range_left_neighbors[1:] >= 0))
+            self.assertTrue(np.any(index.range_right_neighbors[:-1] >= 0))
+            result = index.search(
+                np.array([4.0, 0.0], dtype=np.float32), [[1000, 7000]],
+                RollingSearchConfig(k=2, ef_search=4, exact_threshold=0,
+                                    gateway_candidates=4, gateway_seeds=2,
+                                    use_range_edges=True),
+            )
+            self.assertGreater(result["range_edges_examined"], 0)
 
     def test_disjoint_intervals_merge_exact_components(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -26,15 +26,19 @@ class RollingBuildConfig:
     ef_construction: int = 200
     candidate_index_m: int = 32
     threads: int = 4
+    range_degree_per_side: int = 0
+    range_candidate_count: int = 64
+    range_window_hours: int = 720
 
     def validate(self) -> None:
         values = (
             self.vector_count, self.semantic_degree, self.gateway_degree,
             self.gateway_period, self.construction_candidates,
             self.ef_construction, self.candidate_index_m, self.threads,
+            self.range_candidate_count, self.range_window_hours,
         )
-        if any(value <= 0 for value in values):
-            raise ValueError("all rolling-HNSW build parameters must be positive")
+        if any(value <= 0 for value in values) or self.range_degree_per_side < 0:
+            raise ValueError("rolling-HNSW parameters are invalid")
         if self.construction_candidates < self.semantic_degree:
             raise ValueError("construction_candidates must be at least semantic_degree")
 
@@ -48,6 +52,7 @@ class RollingSearchConfig:
     gateway_seeds: int = 4
     use_temporal_edges: bool = True
     use_gateway_edges: bool = True
+    use_range_edges: bool = True
 
     def validate(self) -> None:
         if min(self.k, self.ef_search, self.gateway_candidates, self.gateway_seeds) <= 0:
@@ -129,7 +134,8 @@ def build_rolling_index(
     output = Path(output)
     if output.exists() and not rebuild:
         manifest = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
-        if manifest["config"] != asdict(config):
+        persisted_config = RollingBuildConfig(**manifest["config"])
+        if persisted_config != config:
             raise ValueError("persisted rolling-HNSW configuration does not match")
         return manifest
 
@@ -139,6 +145,18 @@ def build_rolling_index(
     semantic_neighbors = np.full((count, config.semantic_degree), -1, dtype=np.int32)
     semantic_distances = np.full((count, config.semantic_degree), np.inf, dtype=np.float32)
     temporal_neighbors = np.full((count, 2), -1, dtype=np.int32)
+    range_left_neighbors = np.full(
+        (count, config.range_degree_per_side), -1, dtype=np.int32
+    )
+    range_right_neighbors = np.full(
+        (count, config.range_degree_per_side), -1, dtype=np.int32
+    )
+    range_left_scores = np.full(
+        (count, config.range_degree_per_side), np.inf, dtype=np.float32
+    )
+    range_right_scores = np.full(
+        (count, config.range_degree_per_side), np.inf, dtype=np.float32
+    )
     gateway_rows = np.full(count, -1, dtype=np.int32)
     max_gateways = count // config.gateway_period
     gateway_ids = np.empty(max_gateways, dtype=np.int32)
@@ -185,6 +203,53 @@ def build_rolling_index(
                 temporal_neighbors[local_id, 0] = local_id - 1
                 temporal_neighbors[local_id - 1, 1] = local_id
 
+                if config.range_degree_per_side:
+                    current_timestamp = int(ordered_timestamps[local_id])
+                    window_start = current_timestamp - config.range_window_hours * 3_600_000
+                    first_recent = int(np.searchsorted(
+                        ordered_timestamps[:local_id], window_start, side="left"
+                    ))
+                    recent_population = local_id - first_recent
+                    recent_count = min(config.range_candidate_count, recent_population)
+                    if recent_count:
+                        recent = np.unique(np.linspace(
+                            first_recent, local_id - 1, recent_count, dtype=np.int64
+                        ))
+                    else:
+                        recent = np.empty(0, dtype=np.int64)
+                    # Always retain a small immediate chronological neighborhood.
+                    immediate = np.arange(max(first_recent, local_id - 16), local_id, dtype=np.int64)
+                    pool = np.unique(np.concatenate((
+                        np.asarray(candidates, dtype=np.int64), recent, immediate,
+                    )))
+                    if len(pool):
+                        pool_global_ids = global_ids[pool]
+                        delta = np.asarray(vectors[pool_global_ids], dtype=np.float32) - vector[0]
+                        range_distances = np.einsum("ij,ij->i", delta, delta)
+                        gaps = current_timestamp - ordered_timestamps[pool]
+                        window_ms = config.range_window_hours * 3_600_000
+                        coeligibility = np.maximum(0.0, 1.0 - gaps / window_ms)
+                        valid_range = coeligibility > 0.0
+                        pool = pool[valid_range]
+                        range_distances = range_distances[valid_range]
+                        coeligibility = coeligibility[valid_range]
+                        scores = range_distances / (coeligibility + 1e-6)
+                        selected_count = min(config.range_degree_per_side, len(pool))
+                        if selected_count:
+                            selected = np.argpartition(scores, selected_count - 1)[:selected_count]
+                            selected = selected[np.argsort(scores[selected], kind="stable")]
+                            for selected_position in selected:
+                                neighbor_id = int(pool[selected_position])
+                                score = float(scores[selected_position])
+                                _add_bounded_edge(
+                                    range_left_neighbors, range_left_scores,
+                                    local_id, neighbor_id, score,
+                                )
+                                _add_bounded_edge(
+                                    range_right_neighbors, range_right_scores,
+                                    neighbor_id, local_id, score,
+                                )
+
             if (local_id + 1) % config.gateway_period == 0:
                 row = gateway_count
                 gateway_count += 1
@@ -227,6 +292,8 @@ def build_rolling_index(
             "timestamps": "timestamps.npy",
             "semantic_neighbors": "semantic_neighbors.npy",
             "temporal_neighbors": "temporal_neighbors.npy",
+            "range_left_neighbors": "range_left_neighbors.npy",
+            "range_right_neighbors": "range_right_neighbors.npy",
             "gateway_ids": "gateway_ids.npy",
             "gateway_rows": "gateway_rows.npy",
             "gateway_neighbors": "gateway_neighbors.npy",
@@ -236,6 +303,8 @@ def build_rolling_index(
             "timestamps": ordered_timestamps,
             "semantic_neighbors": semantic_neighbors,
             "temporal_neighbors": temporal_neighbors,
+            "range_left_neighbors": range_left_neighbors,
+            "range_right_neighbors": range_right_neighbors,
             "gateway_ids": gateway_ids[:gateway_count],
             "gateway_rows": gateway_rows,
             "gateway_neighbors": gateway_neighbors[:gateway_count],
@@ -289,6 +358,16 @@ class RollingTemporalHNSW:
         self.temporal_neighbors = np.load(
             self.directory / files["temporal_neighbors"], mmap_mode="r"
         )
+        if "range_left_neighbors" in files:
+            self.range_left_neighbors = np.load(
+                self.directory / files["range_left_neighbors"], mmap_mode="r"
+            )
+            self.range_right_neighbors = np.load(
+                self.directory / files["range_right_neighbors"], mmap_mode="r"
+            )
+        else:
+            self.range_left_neighbors = np.empty((len(self.global_ids), 0), dtype=np.int32)
+            self.range_right_neighbors = np.empty((len(self.global_ids), 0), dtype=np.int32)
         self.gateway_ids = np.load(self.directory / files["gateway_ids"], mmap_mode="r")
         self.gateway_rows = np.load(self.directory / files["gateway_rows"], mmap_mode="r")
         self.gateway_neighbors = np.load(
@@ -367,7 +446,8 @@ class RollingTemporalHNSW:
                 "distance_computations": computations,
                 "nodes_visited": computations, "gateway_candidates": 0,
                 "gateway_seeds": 0, "semantic_edges_examined": 0,
-                "gateway_edges_examined": 0, "temporal_edges_examined": 0,
+                "range_edges_examined": 0, "gateway_edges_examined": 0,
+                "temporal_edges_examined": 0,
                 "out_of_range_edges_rejected": 0, "component_method": "exact_no_gateway",
             }
 
@@ -381,16 +461,20 @@ class RollingTemporalHNSW:
             heapq.heappush(candidates, (distance, local_id))
             heapq.heappush(best, (-distance, local_id))
 
-        semantic_examined = gateway_examined = temporal_examined = rejected = 0
+        semantic_examined = range_examined = gateway_examined = temporal_examined = rejected = 0
         distance_computations = gateway_candidates
         while candidates:
             current_distance, current = heapq.heappop(candidates)
             if len(best) >= config.ef_search and current_distance > -best[0][0]:
                 break
 
-            edge_groups: list[tuple[str, np.ndarray]] = [
-                ("semantic", self.semantic_neighbors[current]),
-            ]
+            edge_groups: list[tuple[str, np.ndarray]] = []
+            if config.use_range_edges:
+                edge_groups.extend((
+                    ("range", self.range_left_neighbors[current]),
+                    ("range", self.range_right_neighbors[current]),
+                ))
+            edge_groups.append(("semantic", self.semantic_neighbors[current]))
             gateway_row = int(self.gateway_rows[current])
             if config.use_gateway_edges and gateway_row >= 0:
                 neighbor_rows = self.gateway_neighbors[gateway_row]
@@ -406,6 +490,8 @@ class RollingTemporalHNSW:
                         continue
                     if edge_type == "semantic":
                         semantic_examined += 1
+                    elif edge_type == "range":
+                        range_examined += 1
                     elif edge_type == "gateway":
                         gateway_examined += 1
                     else:
@@ -435,6 +521,7 @@ class RollingTemporalHNSW:
             "gateway_candidates": gateway_candidates,
             "gateway_seeds": len(seeds),
             "semantic_edges_examined": semantic_examined,
+            "range_edges_examined": range_examined,
             "gateway_edges_examined": gateway_examined,
             "temporal_edges_examined": temporal_examined,
             "out_of_range_edges_rejected": rejected,
@@ -461,8 +548,9 @@ class RollingTemporalHNSW:
         diagnostics = {
             "distance_computations": 0, "nodes_visited": 0,
             "gateway_candidates": 0, "gateway_seeds": 0,
-            "semantic_edges_examined": 0, "gateway_edges_examined": 0,
-            "temporal_edges_examined": 0, "out_of_range_edges_rejected": 0,
+            "semantic_edges_examined": 0, "range_edges_examined": 0,
+            "gateway_edges_examined": 0, "temporal_edges_examined": 0,
+            "out_of_range_edges_rejected": 0,
         }
         candidate_parts: list[np.ndarray] = []
         methods: list[str] = []
@@ -536,6 +624,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ef-construction", type=int, default=200)
     parser.add_argument("--candidate-index-m", type=int, default=32)
     parser.add_argument("--threads", type=int, default=4)
+    parser.add_argument("--range-degree-per-side", type=int, default=0)
+    parser.add_argument("--range-candidate-count", type=int, default=64)
+    parser.add_argument("--range-window-hours", type=int, default=720)
     parser.add_argument("--progress-every", type=int, default=5_000)
     parser.add_argument("--rebuild", action="store_true")
     return parser
@@ -554,6 +645,9 @@ def build_main() -> None:
         ef_construction=args.ef_construction,
         candidate_index_m=args.candidate_index_m,
         threads=args.threads,
+        range_degree_per_side=args.range_degree_per_side,
+        range_candidate_count=args.range_candidate_count,
+        range_window_hours=args.range_window_hours,
     )
     manifest = build_rolling_index(
         vectors, timestamps, args.output, config,

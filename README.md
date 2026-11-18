@@ -189,10 +189,24 @@ benchmark-twitter-rt-hnsw \
 ```
 
 The workload balances 1, 6, 24, 168 and 720-hour coverage with one, two and
-four disjoint predicates. The default output is `results/twitter_rt_hnsw_100k/`.
-This is a flat research prototype, not a production FAISS HNSW replacement: it
-has no adaptive gateways, range-aware pruning, late-arrival repair, expiration,
-or upper-layer temporal chains yet.
+four disjoint predicates. Build the equal-nominal-degree range-aware experiment
+with 16 semantic and eight left/right temporal-compatible edges:
+
+```bash
+build-twitter-rt-hnsw \
+  --output Twitter_data/ann/rolling_hnsw/flat_100k_range8 \
+  --semantic-degree 16 --range-degree-per-side 8 \
+  --range-candidate-count 64 --range-window-hours 720
+
+benchmark-twitter-rt-hnsw \
+  --index Twitter_data/ann/rolling_hnsw/flat_100k_range8 \
+  --ef-search 512 \
+  --output results/twitter_rt_hnsw_100k/range8_ef512
+```
+
+The default workload output is `results/twitter_rt_hnsw_100k/`. This is a flat
+research prototype, not a production FAISS HNSW replacement: it has no adaptive
+gateways, late-arrival repair, expiration, or upper-layer temporal chains yet.
 
 ## Test
 

@@ -194,6 +194,7 @@ def _aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "mean_distance_computations": float(np.mean([row["distance_computations"] for row in rows])),
         "mean_nodes_visited": float(np.mean([row["nodes_visited"] for row in rows])),
         "mean_temporal_edges_examined": float(np.mean([row["temporal_edges_examined"] for row in rows])),
+        "mean_range_edges_examined": float(np.mean([row["range_edges_examined"] for row in rows])),
         "mean_gateway_edges_examined": float(np.mean([row["gateway_edges_examined"] for row in rows])),
         "mean_semantic_edges_examined": float(np.mean([row["semantic_edges_examined"] for row in rows])),
         "mean_eligible_count": float(np.mean([row["eligible_count"] for row in rows])),
@@ -214,12 +215,14 @@ def benchmark(
     progress_every: int = 100,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     variants = {
-        "semantic_only": (False, False),
-        "semantic_temporal": (True, False),
-        "semantic_temporal_gateway": (True, True),
+        "semantic_only": (False, False, False),
+        "semantic_temporal": (True, False, False),
+        "semantic_temporal_gateway": (True, True, False),
+        "semantic_temporal_range": (True, False, True),
+        "semantic_temporal_gateway_range": (True, True, True),
     }
     rows: list[dict[str, Any]] = []
-    for variant, (use_temporal, use_gateway) in variants.items():
+    for variant, (use_temporal, use_gateway, use_range) in variants.items():
         config = RollingSearchConfig(
             k=100,
             ef_search=ef_search,
@@ -228,6 +231,7 @@ def benchmark(
             gateway_seeds=gateway_seeds,
             use_temporal_edges=use_temporal,
             use_gateway_edges=use_gateway,
+            use_range_edges=use_range,
         )
         variant_started = time.perf_counter()
         for position, record in enumerate(workload):
@@ -257,6 +261,7 @@ def benchmark(
                 "gateway_candidates": result["gateway_candidates"],
                 "gateway_seeds": result["gateway_seeds"],
                 "semantic_edges_examined": result["semantic_edges_examined"],
+                "range_edges_examined": result["range_edges_examined"],
                 "gateway_edges_examined": result["gateway_edges_examined"],
                 "temporal_edges_examined": result["temporal_edges_examined"],
                 "out_of_range_edges_rejected": result["out_of_range_edges_rejected"],

@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "backend": "flat rolling temporal HNSW prototype",
+  "candidate_generator": "FAISS IndexHNSWFlat (construction only)",
+  "metric": "squared L2",
+  "vector_count": 100000,
+  "dimensions": 384,
+  "dtype": "float32",
+  "ordered_arrival": true,
+  "timestamp_order_key": "(timestamp_ms, stable source vector_id order)",
+  "config": {
+    "vector_count": 100000,
+    "semantic_degree": 24,
+    "gateway_degree": 8,
+    "gateway_period": 512,
+    "construction_candidates": 64,
+    "ef_construction": 200,
+    "candidate_index_m": 32,
+    "threads": 4,
+    "range_degree_per_side": 4,
+    "range_candidate_count": 64,
+    "range_window_hours": 720
+  },
+  "source": {
+    "embeddings": "Twitter_data/processed/database_vectors.npy",
+    "timestamps": "Twitter_data/ann/timestamps_ms.npy"
+  },
+  "construction_seconds": 120.53514445800101,
+  "gateway_count": 195,
+  "files": {
+    "global_ids": "global_ids.npy",
+    "timestamps": "timestamps.npy",
+    "semantic_neighbors": "semantic_neighbors.npy",
+    "temporal_neighbors": "temporal_neighbors.npy",
+    "range_left_neighbors": "range_left_neighbors.npy",
+    "range_right_neighbors": "range_right_neighbors.npy",
+    "gateway_ids": "gateway_ids.npy",
+    "gateway_rows": "gateway_rows.npy",
+    "gateway_neighbors": "gateway_neighbors.npy"
+  },
+  "artifact_size_bytes": 15608172
+}
