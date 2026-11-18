@@ -219,10 +219,27 @@ benchmark-twitter-rt-hnsw \
   --output results/twitter_rt_hnsw_100k/multiscale_ef512
 ```
 
+Build the hierarchical extension with incremental upper-level semantic indexes,
+protected chronological chains at every level, and strict in-range upper-layer
+entry and descent:
+
+```bash
+build-twitter-rt-hnsw \
+  --output Twitter_data/ann/rolling_hnsw/hierarchical_100k_multiscale \
+  --semantic-degree 20 --range-degree-per-side 2 \
+  --range-scales-hours 24,168,720 \
+  --hierarchy --hierarchy-semantic-degree 8 \
+  --hierarchy-level-probability 0.05 --hierarchy-max-level 6
+
+benchmark-twitter-rt-hnsw \
+  --index Twitter_data/ann/rolling_hnsw/hierarchical_100k_multiscale \
+  --ef-search 512 --upper-ef-search 32 \
+  --output results/twitter_rt_hnsw_100k/hierarchy_ef512
+```
+
 The default workload output is `results/twitter_rt_hnsw_100k/`. This remains a
-flat research prototype, not a production FAISS HNSW replacement: it has no
-adaptive gateways, late-arrival repair, expiration, or upper-layer temporal
-chains yet.
+research prototype, not a production FAISS HNSW replacement: it has no adaptive
+gateways, late-arrival repair, expiration, or concurrent update support.
 
 ## Test
 

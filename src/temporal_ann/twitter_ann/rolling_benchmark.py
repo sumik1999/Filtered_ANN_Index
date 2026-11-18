@@ -197,6 +197,11 @@ def _aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "mean_range_edges_examined": float(np.mean([row["range_edges_examined"] for row in rows])),
         "mean_gateway_edges_examined": float(np.mean([row["gateway_edges_examined"] for row in rows])),
         "mean_semantic_edges_examined": float(np.mean([row["semantic_edges_examined"] for row in rows])),
+        "mean_upper_entry_level": float(np.mean([row["upper_entry_level"] for row in rows])),
+        "mean_upper_nodes_visited": float(np.mean([row["upper_nodes_visited"] for row in rows])),
+        "mean_upper_distance_computations": float(np.mean([row["upper_distance_computations"] for row in rows])),
+        "mean_upper_semantic_edges_examined": float(np.mean([row["upper_semantic_edges_examined"] for row in rows])),
+        "mean_upper_temporal_edges_examined": float(np.mean([row["upper_temporal_edges_examined"] for row in rows])),
         "mean_eligible_count": float(np.mean([row["eligible_count"] for row in rows])),
     }
 
@@ -212,17 +217,20 @@ def benchmark(
     exact_threshold: int = 5_000,
     gateway_candidates: int = 16,
     gateway_seeds: int = 4,
+    upper_ef_search: int = 32,
     progress_every: int = 100,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     variants = {
-        "semantic_only": (False, False, False),
-        "semantic_temporal": (True, False, False),
-        "semantic_temporal_gateway": (True, True, False),
-        "semantic_temporal_range": (True, False, True),
-        "semantic_temporal_gateway_range": (True, True, True),
+        "semantic_only": (False, False, False, False),
+        "semantic_temporal": (True, False, False, False),
+        "semantic_temporal_gateway": (True, True, False, False),
+        "semantic_temporal_range": (True, False, True, False),
+        "semantic_temporal_gateway_range": (True, True, True, False),
     }
+    if index.config.hierarchy_enabled:
+        variants["hierarchical_multiscale"] = (True, False, True, True)
     rows: list[dict[str, Any]] = []
-    for variant, (use_temporal, use_gateway, use_range) in variants.items():
+    for variant, (use_temporal, use_gateway, use_range, use_hierarchy) in variants.items():
         config = RollingSearchConfig(
             k=100,
             ef_search=ef_search,
@@ -232,6 +240,8 @@ def benchmark(
             use_temporal_edges=use_temporal,
             use_gateway_edges=use_gateway,
             use_range_edges=use_range,
+            use_hierarchy=use_hierarchy,
+            upper_ef_search=upper_ef_search,
         )
         variant_started = time.perf_counter()
         for position, record in enumerate(workload):
@@ -265,6 +275,12 @@ def benchmark(
                 "gateway_edges_examined": result["gateway_edges_examined"],
                 "temporal_edges_examined": result["temporal_edges_examined"],
                 "out_of_range_edges_rejected": result["out_of_range_edges_rejected"],
+                "upper_entry_level": result["upper_entry_level"],
+                "upper_nodes_visited": result["upper_nodes_visited"],
+                "upper_distance_computations": result["upper_distance_computations"],
+                "upper_semantic_edges_examined": result["upper_semantic_edges_examined"],
+                "upper_temporal_edges_examined": result["upper_temporal_edges_examined"],
+                "upper_out_of_range_edges_rejected": result["upper_out_of_range_edges_rejected"],
                 "routing_ms": result["routing_ms"],
                 "search_ms": result["search_ms"],
                 "rerank_ms": result["rerank_ms"],
@@ -297,6 +313,7 @@ def benchmark(
             "exact_threshold": exact_threshold,
             "gateway_candidates": gateway_candidates,
             "gateway_seeds": gateway_seeds,
+            "upper_ef_search": upper_ef_search,
             "variants": variants,
         },
         "overall": {name: _aggregate(members) for name, members in by_variant.items()},
@@ -339,6 +356,7 @@ def benchmark_parser() -> argparse.ArgumentParser:
     parser.add_argument("--exact-threshold", type=int, default=5_000)
     parser.add_argument("--gateway-candidates", type=int, default=16)
     parser.add_argument("--gateway-seeds", type=int, default=4)
+    parser.add_argument("--upper-ef-search", type=int, default=32)
     parser.add_argument("--progress-every", type=int, default=100)
     return parser
 
@@ -373,6 +391,7 @@ def benchmark_main() -> None:
         exact_threshold=args.exact_threshold,
         gateway_candidates=args.gateway_candidates,
         gateway_seeds=args.gateway_seeds,
+        upper_ef_search=args.upper_ef_search,
         progress_every=args.progress_every,
     )
     print(json.dumps(summary["overall"], indent=2))
