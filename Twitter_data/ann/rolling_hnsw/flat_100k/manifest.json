@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "backend": "flat rolling temporal HNSW prototype",
+  "candidate_generator": "FAISS IndexHNSWFlat (construction only)",
+  "metric": "squared L2",
+  "vector_count": 100000,
+  "dimensions": 384,
+  "dtype": "float32",
+  "ordered_arrival": true,
+  "timestamp_order_key": "(timestamp_ms, stable source vector_id order)",
+  "config": {
+    "vector_count": 100000,
+    "semantic_degree": 32,
+    "gateway_degree": 8,
+    "gateway_period": 512,
+    "construction_candidates": 64,
+    "ef_construction": 200,
+    "candidate_index_m": 32,
+    "threads": 4
+  },
+  "source": {
+    "embeddings": "Twitter_data/processed/database_vectors.npy",
+    "timestamps": "Twitter_data/ann/timestamps_ms.npy",
+    "selection": "earliest 100000 records in stable timestamp order"
+  },
+  "construction_seconds": 105.17984354199143,
+  "gateway_count": 195,
+  "files": {
+    "global_ids": "global_ids.npy",
+    "timestamps": "timestamps.npy",
+    "semantic_neighbors": "semantic_neighbors.npy",
+    "temporal_neighbors": "temporal_neighbors.npy",
+    "gateway_ids": "gateway_ids.npy",
+    "gateway_rows": "gateway_rows.npy",
+    "gateway_neighbors": "gateway_neighbors.npy"
+  },
+  "artifact_size_bytes": 15607916
+}

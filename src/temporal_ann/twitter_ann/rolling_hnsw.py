@@ -46,6 +46,8 @@ class RollingSearchConfig:
     exact_threshold: int = 5_000
     gateway_candidates: int = 16
     gateway_seeds: int = 4
+    use_temporal_edges: bool = True
+    use_gateway_edges: bool = True
 
     def validate(self) -> None:
         if min(self.k, self.ef_search, self.gateway_candidates, self.gateway_seeds) <= 0:
@@ -390,11 +392,12 @@ class RollingTemporalHNSW:
                 ("semantic", self.semantic_neighbors[current]),
             ]
             gateway_row = int(self.gateway_rows[current])
-            if gateway_row >= 0:
+            if config.use_gateway_edges and gateway_row >= 0:
                 neighbor_rows = self.gateway_neighbors[gateway_row]
                 valid_rows = neighbor_rows[neighbor_rows >= 0]
                 edge_groups.append(("gateway", self.gateway_ids[valid_rows]))
-            edge_groups.append(("temporal", self.temporal_neighbors[current]))
+            if config.use_temporal_edges:
+                edge_groups.append(("temporal", self.temporal_neighbors[current]))
 
             for edge_type, neighbors in edge_groups:
                 for value in neighbors:

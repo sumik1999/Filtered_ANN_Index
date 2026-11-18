@@ -81,6 +81,16 @@ class TwitterRollingHNSWTests(unittest.TestCase):
                 self.assertGreaterEqual(self.timestamps[global_id], 1000)
                 self.assertLess(self.timestamps[global_id], 7000)
 
+            semantic_only = index.search(
+                np.array([4.0, 0.0], dtype=np.float32),
+                [[1000, 7000]],
+                RollingSearchConfig(k=2, ef_search=4, exact_threshold=0,
+                                    gateway_candidates=4, gateway_seeds=2,
+                                    use_temporal_edges=False, use_gateway_edges=False),
+            )
+            self.assertEqual(semantic_only["temporal_edges_examined"], 0)
+            self.assertEqual(semantic_only["gateway_edges_examined"], 0)
+
     def test_disjoint_intervals_merge_exact_components(self):
         with tempfile.TemporaryDirectory() as directory:
             index = self.build(directory)

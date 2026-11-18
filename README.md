@@ -177,10 +177,22 @@ build-twitter-rt-hnsw \
   --ef-construction 200
 ```
 
-The default output is `Twitter_data/ann/rolling_hnsw/flat_100k/`. This is a
-flat research prototype, not a production FAISS HNSW replacement: it has no
-adaptive gateways, range-aware pruning, late-arrival repair, expiration, or
-upper-layer temporal chains yet.
+The default output is `Twitter_data/ann/rolling_hnsw/flat_100k/`. Generate a
+matched 900-query workload and exact ground truth, then run the semantic-only,
+semantic-plus-temporal, and semantic-plus-temporal-plus-gateway ablation:
+
+```bash
+generate-twitter-rt-workload
+benchmark-twitter-rt-hnsw \
+  --ef-search 128 --exact-threshold 5000 \
+  --gateway-candidates 16 --gateway-seeds 4
+```
+
+The workload balances 1, 6, 24, 168 and 720-hour coverage with one, two and
+four disjoint predicates. The default output is `results/twitter_rt_hnsw_100k/`.
+This is a flat research prototype, not a production FAISS HNSW replacement: it
+has no adaptive gateways, range-aware pruning, late-arrival repair, expiration,
+or upper-layer temporal chains yet.
 
 ## Test
 
