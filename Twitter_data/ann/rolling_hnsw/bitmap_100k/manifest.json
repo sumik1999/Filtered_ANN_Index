@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "backend": "time-stretched temporal bitmap HNSW prototype",
+  "metric": "squared L2",
+  "vector_count": 100000,
+  "dimensions": 384,
+  "config": {
+    "vector_count": 100000,
+    "local_semantic_degree": 6,
+    "historical_semantic_degree": 6,
+    "future_reciprocal_degree": 6,
+    "local_window_hours": 24,
+    "range_degree_per_side": 1,
+    "range_scales_hours": "24,168,720",
+    "range_candidate_count": 64,
+    "bridge_degree_per_side": 1,
+    "bridge_scales_epochs": "1,4,16,64",
+    "epoch_hours": 24,
+    "gateway_period": 512,
+    "construction_candidates": 64,
+    "ef_construction": 200,
+    "candidate_index_m": 32,
+    "threads": 4
+  },
+  "epoch_origin_ms": 1609459200000,
+  "epoch_count": 38,
+  "bitmap_words": 1,
+  "edge_group_names": [
+    "local",
+    "historical",
+    "future",
+    "range_24h",
+    "range_168h",
+    "range_720h",
+    "bridge",
+    "temporal"
+  ],
+  "range_scales_hours": [
+    24,
+    168,
+    720
+  ],
+  "bridge_scales_epochs": [
+    1,
+    4,
+    16,
+    64
+  ],
+  "gateway_count": 195,
+  "construction_seconds": 127.0689207079995,
+  "files": {
+    "global_ids": "global_ids.npy",
+    "timestamps": "timestamps.npy",
+    "epoch_ids": "epoch_ids.npy",
+    "local_neighbors": "local_neighbors.npy",
+    "historical_neighbors": "historical_neighbors.npy",
+    "future_neighbors": "future_neighbors.npy",
+    "temporal_neighbors": "temporal_neighbors.npy",
+    "range_left_neighbors": "range_left_neighbors.npy",
+    "range_right_neighbors": "range_right_neighbors.npy",
+    "bridge_left_neighbors": "bridge_left_neighbors.npy",
+    "bridge_right_neighbors": "bridge_right_neighbors.npy",
+    "gateway_ids": "gateway_ids.npy",
+    "edge_epoch_bitmaps": "edge_epoch_bitmaps.npy",
+    "portal_coverage_bitmaps": "portal_coverage_bitmaps.npy"
+  },
+  "artifact_size_bytes": 22404132
+}

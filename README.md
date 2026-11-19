@@ -303,6 +303,27 @@ minimum-sequence freshness waits, reader leases and safe generation collection.
 The design and remaining chunked-storage work are detailed in
 `docs/KAFKA_INCREMENTAL_RT_HNSW_ARCHITECTURE.md`.
 
+### Time-stretched bitmap graph experiment
+
+The bitmap topology gives local, historical and future-reciprocal semantic
+links independent budgets, adds deterministic skip-epoch bridges, and stores a
+conservative epoch bitmap per edge group:
+
+```bash
+build-twitter-temporal-bitmap-hnsw \
+  --output Twitter_data/ann/rolling_hnsw/bitmap_100k
+benchmark-twitter-temporal-bitmap-hnsw \
+  --index Twitter_data/ann/rolling_hnsw/bitmap_100k \
+  --ef-search 256 \
+  --output results/twitter_rt_hnsw_100k/temporal_bitmap_ef256
+```
+
+At efSearch 256, bitmap pruning preserves identical 0.9491 recall and reduces
+edge examination by 8.7% and explicit out-of-range rejection by 27.5%. Python
+bitmap dispatch raises latency, and overall recall remains below the existing
+flat multi-scale graph. See
+`results/twitter_rt_hnsw_100k/TEMPORAL_BITMAP_ANALYSIS.md`.
+
 A search request is strict to one immutable generation:
 
 ```bash
