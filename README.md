@@ -282,6 +282,9 @@ pip install -e '.[kafka]'
 kafka-twitter-embedder --index-name twitter-rt-hnsw
 kafka-twitter-orderer --index-name twitter-rt-hnsw \
   --allowed-lateness-ms 600000
+kafka-twitter-index-writer \
+  --index-name twitter-rt-hnsw \
+  --index Twitter_data/ann/streaming_rt_hnsw
 kafka-twitter-producer --input new_tweets.jsonl
 ```
 
@@ -289,11 +292,12 @@ The initializer creates parallel raw/embedded topics, a single-partition
 canonical ordered index log, late-event and dead-letter topics, and compacted
 orderer-state/checkpoint topics. Phase 1 implements validation, a deterministic
 development embedding stub, transactional event-time ordering, deduplication,
-late routing, contiguous index sequences and changelog recovery. The watermark,
-single-writer micro-batch commit, immutable query snapshots, and delivery phases
-are detailed in `docs/KAFKA_INCREMENTAL_RT_HNSW_ARCHITECTURE.md`. The current
-index builder still requires the Phase 2 incremental writer refactor before
-ordered Kafka events can update a live index.
+late routing, contiguous index sequences and changelog recovery. Phase 2 adds a
+durable flat multi-scale RT-HNSW writer with append WALs, incremental edge
+updates, persisted FAISS construction state, immutable generations, atomic
+`CURRENT` publication and idempotent Kafka replay. The design and remaining
+chunked-storage/live-reader work are detailed in
+`docs/KAFKA_INCREMENTAL_RT_HNSW_ARCHITECTURE.md`.
 
 ## Test
 

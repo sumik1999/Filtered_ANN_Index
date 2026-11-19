@@ -2,7 +2,7 @@
 
 ## Status and scope
 
-This document defines the first streaming architecture for ingesting new Twitter records and publishing ordered, incremental RT-HNSW snapshots. It does not claim that the current index already supports online append: the existing builder must be refactored into a durable single-writer API before the index-writer stage can be enabled.
+This document defines the streaming architecture for ingesting new Twitter records and publishing ordered, incremental RT-HNSW snapshots. The branch now includes a correctness-first durable single-writer implementation for the flat multi-scale topology; production storage optimization and live query-service integration remain outstanding.
 
 The initial design optimizes for correctness and recoverability rather than maximum write throughput:
 
@@ -186,13 +186,16 @@ Only one active writer may own an index. A Kafka consumer group with the single 
 The current monolithic builder should be refactored behind:
 
 ```python
-writer = RollingTemporalHNSWWriter.open(index_directory)
-writer.append_batch(events, expected_first_sequence)
-writer.checkpoint()
-writer.publish()
+writer = RollingTemporalHNSWWriter(index_directory)
+result = writer.append_batch(
+    events,
+    checkpoint={"topic": topic, "partition": partition, "offset": offset},
+)
 ```
 
-`append_batch` must:
+`append_batch` durably writes its WAL, updates the graph, publishes an immutable
+generation, advances `CURRENT`, and only then returns to the Kafka consumer.
+It must:
 
 1. verify contiguous sequence numbers;
 2. verify nondecreasing `(event_time_ms, tweet_id)` keys;
@@ -392,9 +395,23 @@ injection remains required before Phase 1 is considered production-complete.
 
 ### Phase 2: durable incremental writer
 
-- Refactor construction into `RollingTemporalHNSWWriter`.
-- Implement WAL, micro-batch generation and idempotent replay.
-- Compare Kafka replay with offline build.
+Implemented in this branch for the flat multi-scale topology:
+
+- `RollingTemporalHNSWWriter.create/open` and ordered micro-batch append;
+- incremental semantic, temporal, range and gateway edge updates;
+- persisted FAISS construction-candidate state;
+- append WAL and automatic orphaned-WAL recovery;
+- contiguous-sequence and event-time ordering enforcement;
+- idempotent replay with content-hash conflict detection;
+- immutable checksummed generations and atomic `CURRENT` publication;
+- advisory single-writer lease in the Kafka service;
+- compacted checkpoint publication after generation commit; and
+- differential tests against the uninterrupted offline builder.
+
+The correctness-first publisher currently rewrites complete NumPy artifacts for
+each generation. It supports the recommended flat topology only. Chunked
+append-only arrays, generation garbage collection, hierarchy updates and broker
+failure-injection tests remain before production use.
 
 ### Phase 3: live query snapshots
 

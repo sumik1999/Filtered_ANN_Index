@@ -24,6 +24,7 @@ ORDERED_TOPIC = "twitter.index.ordered.v1"
 LATE_TOPIC = "twitter.index.late.v1"
 DLQ_TOPIC = "twitter.index.dlq.v1"
 STATE_TOPIC = "twitter.orderer.state.v1"
+CHECKPOINT_TOPIC = "twitter.index.checkpoints.v1"
 
 
 def _kafka():
@@ -270,6 +271,85 @@ def run_orderer(args: argparse.Namespace) -> None:
     )
 
 
+def run_index_writer(args: argparse.Namespace) -> None:
+    Consumer, Producer, TopicPartition = _kafka()
+    import fcntl
+    from ..rolling_hnsw import RollingBuildConfig
+    from .incremental_writer import RollingTemporalHNSWWriter
+
+    config = RollingBuildConfig(
+        vector_count=args.capacity,
+        semantic_degree=args.semantic_degree,
+        gateway_degree=args.gateway_degree,
+        gateway_period=args.gateway_period,
+        construction_candidates=args.construction_candidates,
+        ef_construction=args.ef_construction,
+        candidate_index_m=args.candidate_index_m,
+        threads=args.threads,
+        range_degree_per_side=args.range_degree_per_side,
+        range_candidate_count=args.range_candidate_count,
+        range_scales_hours=args.range_scales_hours,
+    )
+    args.index.mkdir(parents=True, exist_ok=True)
+    lease_handle = (args.index / "WRITER.lock").open("a+")
+    try:
+        fcntl.flock(lease_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError as error:
+        lease_handle.close()
+        raise RuntimeError(f"another writer owns {args.index}") from error
+    writer = RollingTemporalHNSWWriter.create(
+        args.index, config, dimensions=384, index_name=args.index_name
+    )
+    consumer = Consumer(_consumer_config(args.bootstrap, args.group))
+    checkpoint_producer = Producer(_producer_config(args.bootstrap))
+    consumer.subscribe([ORDERED_TOPIC])
+    handled = 0
+    try:
+        while args.max_records <= 0 or handled < args.max_records:
+            remaining = args.batch_size if args.max_records <= 0 else min(
+                args.batch_size, args.max_records - handled
+            )
+            messages = consumer.consume(remaining, timeout=args.poll_timeout)
+            messages = [message for message in messages if not message.error()]
+            if not messages:
+                continue
+            messages.sort(key=lambda message: (message.partition(), message.offset()))
+            events = [json.loads(message.value()) for message in messages]
+            latest = max(messages, key=lambda message: message.offset())
+            checkpoint = {
+                "topic": latest.topic(),
+                "partition": latest.partition(),
+                "offset": latest.offset(),
+            }
+            result = writer.append_batch(events, checkpoint=checkpoint)
+            checkpoint_value = canonical_json({
+                "index_name": args.index_name,
+                "generation": writer.current_generation,
+                "last_index_sequence": writer.last_sequence,
+                "vector_count": writer.vector_count,
+                "source": checkpoint,
+                "published_at_ms": int(time.time() * 1000),
+            })
+            _produce(checkpoint_producer, CHECKPOINT_TOPIC, args.index_name, checkpoint_value)
+            checkpoint_producer.flush()
+            consumer.commit(
+                offsets=[TopicPartition(
+                    latest.topic(), latest.partition(), latest.offset() + 1
+                )],
+                asynchronous=False,
+            )
+            handled += len(messages)
+            print(
+                f"index writer: consumed={handled} appended={result['appended']} "
+                f"sequence={writer.last_sequence} generation={writer.current_generation}",
+                flush=True,
+            )
+    finally:
+        consumer.close()
+        fcntl.flock(lease_handle.fileno(), fcntl.LOCK_UN)
+        lease_handle.close()
+
+
 def producer_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Produce validated Twitter JSONL to Kafka")
     parser.add_argument("--bootstrap", default=os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:29092"))
@@ -302,6 +382,29 @@ def orderer_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def index_writer_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Append ordered Kafka events to durable RT-HNSW generations")
+    parser.add_argument("--bootstrap", default=os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:29092"))
+    parser.add_argument("--group", default="rt-hnsw-index-writer-v1")
+    parser.add_argument("--index-name", default="twitter-rt-hnsw")
+    parser.add_argument("--index", type=Path, default=Path("Twitter_data/ann/streaming_rt_hnsw"))
+    parser.add_argument("--capacity", type=int, default=10_000_000)
+    parser.add_argument("--batch-size", type=int, default=256)
+    parser.add_argument("--poll-timeout", type=float, default=1.0)
+    parser.add_argument("--max-records", type=int, default=0)
+    parser.add_argument("--semantic-degree", type=int, default=20)
+    parser.add_argument("--gateway-degree", type=int, default=8)
+    parser.add_argument("--gateway-period", type=int, default=512)
+    parser.add_argument("--construction-candidates", type=int, default=64)
+    parser.add_argument("--ef-construction", type=int, default=200)
+    parser.add_argument("--candidate-index-m", type=int, default=32)
+    parser.add_argument("--threads", type=int, default=4)
+    parser.add_argument("--range-degree-per-side", type=int, default=2)
+    parser.add_argument("--range-candidate-count", type=int, default=64)
+    parser.add_argument("--range-scales-hours", default="24,168,720")
+    return parser
+
+
 def producer_main() -> None:
     produce_jsonl(producer_parser().parse_args())
 
@@ -312,3 +415,7 @@ def embedder_main() -> None:
 
 def orderer_main() -> None:
     run_orderer(orderer_parser().parse_args())
+
+
+def index_writer_main() -> None:
+    run_index_writer(index_writer_parser().parse_args())
