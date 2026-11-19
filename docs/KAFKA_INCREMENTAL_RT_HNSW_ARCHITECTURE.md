@@ -415,9 +415,22 @@ failure-injection tests remain before production use.
 
 ### Phase 3: live query snapshots
 
-- Add atomic generation publication and reader reload.
-- Run query load while batches publish.
-- Define freshness and query-latency SLOs.
+Implemented in this branch:
+
+- background polling and atomic reload of `CURRENT`;
+- read-copy-update snapshot switching;
+- per-query generation pinning and reference counts;
+- cross-process shared reader leases;
+- safe old-generation collection using an exclusive lease;
+- minimum-index-sequence freshness waits with bounded timeout;
+- concurrent query/update isolation tests; and
+- a threaded HTTP service exposing `/search`, `/health`, `/status` and
+  `/refresh`.
+
+Every response identifies the generation and last index sequence that served
+it. Existing queries finish on their original generation while new queries use
+the newly published one. Production SLO calibration, authentication, request
+rate limiting and optimized chunked generation storage remain outstanding.
 
 ### Phase 4: late-data support
 

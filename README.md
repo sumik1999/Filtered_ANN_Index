@@ -285,6 +285,8 @@ kafka-twitter-orderer --index-name twitter-rt-hnsw \
 kafka-twitter-index-writer \
   --index-name twitter-rt-hnsw \
   --index Twitter_data/ann/streaming_rt_hnsw
+serve-twitter-rt-hnsw \
+  --index Twitter_data/ann/streaming_rt_hnsw --port 8080
 kafka-twitter-producer --input new_tweets.jsonl
 ```
 
@@ -295,9 +297,23 @@ development embedding stub, transactional event-time ordering, deduplication,
 late routing, contiguous index sequences and changelog recovery. Phase 2 adds a
 durable flat multi-scale RT-HNSW writer with append WALs, incremental edge
 updates, persisted FAISS construction state, immutable generations, atomic
-`CURRENT` publication and idempotent Kafka replay. The design and remaining
-chunked-storage/live-reader work are detailed in
+`CURRENT` publication and idempotent Kafka replay. Phase 3 adds a live HTTP
+query service with background generation reload, per-query snapshot pinning,
+minimum-sequence freshness waits, reader leases and safe generation collection.
+The design and remaining chunked-storage work are detailed in
 `docs/KAFKA_INCREMENTAL_RT_HNSW_ARCHITECTURE.md`.
+
+A search request is strict to one immutable generation:
+
+```bash
+curl -X POST http://127.0.0.1:8080/search \
+  -H 'Content-Type: application/json' \
+  -d '{"query":[...384 floats...],"intervals":[[START_MS,END_MS]],
+       "k":100,"ef_search":256,"min_sequence":1000,"wait_timeout_ms":2000}'
+```
+
+Health and generation freshness are available from `GET /health` and
+`GET /status`; `POST /refresh` forces a pointer check.
 
 ## Test
 

@@ -52,6 +52,7 @@ kafka-twitter-producer = "temporal_ann.twitter_ann.streaming.kafka_pipeline:prod
 kafka-twitter-embedder = "temporal_ann.twitter_ann.streaming.kafka_pipeline:embedder_main"
 kafka-twitter-orderer = "temporal_ann.twitter_ann.streaming.kafka_pipeline:orderer_main"
 kafka-twitter-index-writer = "temporal_ann.twitter_ann.streaming.kafka_pipeline:index_writer_main"
+serve-twitter-rt-hnsw = "temporal_ann.twitter_ann.streaming.live_query:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
