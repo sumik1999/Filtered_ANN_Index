@@ -177,6 +177,81 @@ class TwitterRollingHNSWTests(unittest.TestCase):
                     config, entry_gateway_ids=np.array([3, 1]),
                 )
 
+    def test_coverage_overlay_persists_block_metadata(self):
+        with tempfile.TemporaryDirectory() as directory:
+            index = self.build(directory)
+            np.testing.assert_array_equal(
+                index.coverage_block_offsets, [0, 8]
+            )
+            self.assertEqual(index.coverage_block_gateways.shape, (1, 4))
+            self.assertEqual(int(index.coverage_block_min_timestamps[0]), 1000)
+            self.assertEqual(int(index.coverage_block_max_timestamps[0]), 8000)
+
+    def test_coverage_search_expands_every_intersecting_block_strictly(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "rolling_coverage"
+            build_rolling_index(
+                self.vectors, self.timestamps, root,
+                replace(self.config, coverage_block_size=2,
+                        coverage_gateways_per_block=2),
+                progress_every=0,
+            )
+            index = RollingTemporalHNSW(root, self.vectors)
+            result = index.search(
+                np.array([4.0, 0.0], dtype=np.float32), [[2500, 7500]],
+                RollingSearchConfig(
+                    k=2, ef_search=4, exact_threshold=0,
+                    gateway_candidates=4, gateway_seeds=2,
+                    use_hierarchy=False, coverage_enabled=True,
+                    coverage_expansions_per_block=1,
+                    coverage_gateway_candidates=2,
+                ),
+            )
+            self.assertEqual(result["method"], "strict_coverage_graph")
+            self.assertEqual(result["coverage_blocks_considered"], 3)
+            self.assertEqual(result["coverage_blocks_covered"], 3)
+            self.assertEqual(result["coverage_expansions"], 3)
+            self.assertEqual(result["gateway_seeds"], 0)
+            self.assertTrue({1, 2, 3}.issubset(set(result["visited_block_ids"])))
+            for global_id in result["ids"]:
+                self.assertGreaterEqual(self.timestamps[global_id], 2500)
+                self.assertLess(self.timestamps[global_id], 7500)
+
+            class AuditedVectors:
+                def __init__(self, values):
+                    self.values = values
+                    self.shape = values.shape
+                    self.ndim = values.ndim
+                    self.dtype = values.dtype
+                    self.rows = []
+
+                def __len__(self):
+                    return len(self.values)
+
+                def __getitem__(self, key):
+                    row_key = key[0] if isinstance(key, tuple) else key
+                    rows = np.arange(len(self.values))[row_key]
+                    self.rows.extend(np.asarray(rows).reshape(-1).tolist())
+                    return self.values[key]
+
+            audited = AuditedVectors(self.vectors)
+            index.vectors = audited
+            audited_result = index.search(
+                np.array([4.0, 0.0], dtype=np.float32), [[2500, 7500]],
+                RollingSearchConfig(
+                    k=2, ef_search=4, exact_threshold=0,
+                    gateway_candidates=4, gateway_seeds=2,
+                    use_hierarchy=False, coverage_enabled=True,
+                    coverage_expansions_per_block=1,
+                    coverage_gateway_candidates=2,
+                ),
+            )
+            self.assertTrue(audited.rows)
+            self.assertTrue(all(
+                2500 <= self.timestamps[row] < 7500 for row in audited.rows
+            ))
+            self.assertEqual(audited_result["coverage_blocks_covered"], 3)
+
     def test_disjoint_intervals_merge_exact_components(self):
         with tempfile.TemporaryDirectory() as directory:
             index = self.build(directory)

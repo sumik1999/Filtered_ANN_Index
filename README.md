@@ -260,11 +260,37 @@ benchmark-twitter-gateway-oracle \
   --candidate-step 64 --ef-search 256
 ```
 
+The coverage-aware extension adds compact fixed-population temporal blocks,
+conservative min/max timestamps, diverse representatives, and a mandatory
+coverage queue. It preserves the existing strict graph and exact fallback while
+ensuring every block intersecting a graph-searched component receives the
+configured minimum number of expansions:
+
+```bash
+build-twitter-rt-hnsw \
+  --output Twitter_data/ann/rolling_hnsw/flat_100k_coverage \
+  --semantic-degree 20 --range-degree-per-side 2 \
+  --range-scales-hours 24,168,720 \
+  --coverage-block-size 512 --coverage-gateways-per-block 4
+
+benchmark-twitter-rt-hnsw \
+  --index Twitter_data/ann/rolling_hnsw/flat_100k_coverage \
+  --variants semantic_temporal_range,coverage_multiscale \
+  --ef-search 256 --coverage-expansions-per-block 1 \
+  --coverage-gateway-candidates 4 \
+  --output results/twitter_rt_hnsw_100k/coverage_ef256
+```
+
+The benchmark reports both temporal coverage diagnostics and the fraction of
+blocks containing exact top-k neighbors that traversal visited. Block coverage
+is not a guarantee of exact nearest-neighbor recall. See
+`docs/COVERAGE_AWARE_RT_HNSW.md` for the invariants and experiment protocol.
+
 The default workload output is `results/twitter_rt_hnsw_100k/`. This remains a
-research prototype, not a production FAISS HNSW replacement: it has no adaptive
-gateways, late-arrival repair, expiration, or concurrent update support. The
-gated adaptive gateway plan and failed oracle acceptance result are documented
-in `docs/ADAPTIVE_GATEWAY_PLAN.md`.
+research prototype, not a production FAISS HNSW replacement: it has no late-
+arrival repair, expiration, or concurrent update support. The gated adaptive
+gateway plan and failed oracle acceptance result are documented in
+`docs/ADAPTIVE_GATEWAY_PLAN.md`.
 
 ## Test
 

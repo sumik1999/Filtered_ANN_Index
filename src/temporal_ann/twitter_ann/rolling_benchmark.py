@@ -203,6 +203,12 @@ def _aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "mean_upper_semantic_edges_examined": float(np.mean([row["upper_semantic_edges_examined"] for row in rows])),
         "mean_upper_range_edges_examined": float(np.mean([row["upper_range_edges_examined"] for row in rows])),
         "mean_upper_temporal_edges_examined": float(np.mean([row["upper_temporal_edges_examined"] for row in rows])),
+        "mean_coverage_blocks_considered": float(np.mean([row["coverage_blocks_considered"] for row in rows])),
+        "mean_coverage_blocks_covered": float(np.mean([row["coverage_blocks_covered"] for row in rows])),
+        "mean_coverage_expansions": float(np.mean([row["coverage_expansions"] for row in rows])),
+        "mean_coverage_distance_computations": float(np.mean([row["coverage_distance_computations"] for row in rows])),
+        "mean_ground_truth_block_count": float(np.mean([row["ground_truth_block_count"] for row in rows])),
+        "mean_ground_truth_block_coverage": float(np.mean([row["ground_truth_block_coverage"] for row in rows])),
         "mean_eligible_count": float(np.mean([row["eligible_count"] for row in rows])),
     }
 
@@ -219,25 +225,33 @@ def benchmark(
     gateway_candidates: int = 16,
     gateway_seeds: int = 4,
     upper_ef_search: int = 32,
+    coverage_expansions_per_block: int = 1,
+    coverage_gateway_candidates: int = 4,
     variant_names: list[str] | None = None,
     progress_every: int = 100,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     variants = {
-        "semantic_only": (False, False, False, False),
-        "semantic_temporal": (True, False, False, False),
-        "semantic_temporal_gateway": (True, True, False, False),
-        "semantic_temporal_range": (True, False, True, False),
-        "semantic_temporal_gateway_range": (True, True, True, False),
+        "semantic_only": (False, False, False, False, False),
+        "semantic_temporal": (True, False, False, False, False),
+        "semantic_temporal_gateway": (True, True, False, False, False),
+        "semantic_temporal_range": (True, False, True, False, False),
+        "semantic_temporal_gateway_range": (True, True, True, False, False),
+        "coverage_multiscale": (True, False, True, False, True),
     }
     if index.config.hierarchy_enabled:
-        variants["hierarchical_multiscale"] = (True, False, True, True)
+        variants["hierarchical_multiscale"] = (True, False, True, True, False)
     if variant_names:
         unknown = set(variant_names) - set(variants)
         if unknown:
             raise ValueError(f"unknown variants: {sorted(unknown)}")
         variants = {name: variants[name] for name in variant_names}
+    global_to_local = np.full(len(index.vectors), -1, dtype=np.int64)
+    global_to_local[np.asarray(index.global_ids, dtype=np.int64)] = np.arange(
+        len(index.global_ids), dtype=np.int64
+    )
     rows: list[dict[str, Any]] = []
-    for variant, (use_temporal, use_gateway, use_range, use_hierarchy) in variants.items():
+    for variant, (use_temporal, use_gateway, use_range, use_hierarchy,
+                  coverage_enabled) in variants.items():
         config = RollingSearchConfig(
             k=100,
             ef_search=ef_search,
@@ -249,6 +263,9 @@ def benchmark(
             use_range_edges=use_range,
             use_hierarchy=use_hierarchy,
             upper_ef_search=upper_ef_search,
+            coverage_enabled=coverage_enabled,
+            coverage_expansions_per_block=coverage_expansions_per_block,
+            coverage_gateway_candidates=coverage_gateway_candidates,
         )
         variant_started = time.perf_counter()
         for position, record in enumerate(workload):
@@ -256,6 +273,18 @@ def benchmark(
                 np.asarray(queries[record["query_id"]], dtype=np.float32),
                 record["intervals"],
                 config,
+            )
+            truth_ids = np.asarray(truth["neighbor_ids"][position], dtype=np.int64)
+            truth_ids = truth_ids[truth_ids >= 0]
+            truth_local_ids = global_to_local[truth_ids]
+            truth_blocks = set(map(
+                int,
+                truth_local_ids[truth_local_ids >= 0] // index.config.coverage_block_size,
+            ))
+            visited_blocks = set(map(int, result["visited_block_ids"]))
+            truth_block_coverage = (
+                len(truth_blocks & visited_blocks) / len(truth_blocks)
+                if truth_blocks else 1.0
             )
             recall, precision = _quality(result["ids"], truth["neighbor_ids"][position])
             rows.append({
@@ -289,6 +318,15 @@ def benchmark(
                 "upper_range_edges_examined": result["upper_range_edges_examined"],
                 "upper_temporal_edges_examined": result["upper_temporal_edges_examined"],
                 "upper_out_of_range_edges_rejected": result["upper_out_of_range_edges_rejected"],
+                "coverage_blocks_considered": result["coverage_blocks_considered"],
+                "coverage_blocks_covered": result["coverage_blocks_covered"],
+                "coverage_expansions": result["coverage_expansions"],
+                "coverage_gateway_candidates": result["coverage_gateway_candidates"],
+                "coverage_distance_computations": result["coverage_distance_computations"],
+                "coverage_cross_block_edges_skipped": result["coverage_cross_block_edges_skipped"],
+                "ground_truth_block_count": len(truth_blocks),
+                "visited_block_count": len(visited_blocks),
+                "ground_truth_block_coverage": truth_block_coverage,
                 "routing_ms": result["routing_ms"],
                 "search_ms": result["search_ms"],
                 "rerank_ms": result["rerank_ms"],
@@ -322,6 +360,8 @@ def benchmark(
             "gateway_candidates": gateway_candidates,
             "gateway_seeds": gateway_seeds,
             "upper_ef_search": upper_ef_search,
+            "coverage_expansions_per_block": coverage_expansions_per_block,
+            "coverage_gateway_candidates": coverage_gateway_candidates,
             "variants": variants,
         },
         "overall": {name: _aggregate(members) for name, members in by_variant.items()},
@@ -365,6 +405,8 @@ def benchmark_parser() -> argparse.ArgumentParser:
     parser.add_argument("--gateway-candidates", type=int, default=16)
     parser.add_argument("--gateway-seeds", type=int, default=4)
     parser.add_argument("--upper-ef-search", type=int, default=32)
+    parser.add_argument("--coverage-expansions-per-block", type=int, default=1)
+    parser.add_argument("--coverage-gateway-candidates", type=int, default=4)
     parser.add_argument("--variants", default="")
     parser.add_argument("--progress-every", type=int, default=100)
     return parser
@@ -401,6 +443,8 @@ def benchmark_main() -> None:
         gateway_candidates=args.gateway_candidates,
         gateway_seeds=args.gateway_seeds,
         upper_ef_search=args.upper_ef_search,
+        coverage_expansions_per_block=args.coverage_expansions_per_block,
+        coverage_gateway_candidates=args.coverage_gateway_candidates,
         variant_names=[value.strip() for value in args.variants.split(",") if value.strip()],
         progress_every=args.progress_every,
     )

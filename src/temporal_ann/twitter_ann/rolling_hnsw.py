@@ -39,6 +39,8 @@ class RollingBuildConfig:
     hierarchy_range_degree_per_side: int = 0
     hierarchy_range_candidate_count: int = 32
     hierarchy_range_scales_hours: str = ""
+    coverage_block_size: int = 512
+    coverage_gateways_per_block: int = 4
 
     def range_scales(self) -> tuple[int, ...]:
         if self.range_degree_per_side == 0:
@@ -77,6 +79,7 @@ class RollingBuildConfig:
             self.hierarchy_semantic_degree, self.hierarchy_max_level,
             self.hierarchy_construction_candidates,
             self.hierarchy_range_candidate_count,
+            self.coverage_block_size, self.coverage_gateways_per_block,
         )
         if (any(value <= 0 for value in values) or self.range_degree_per_side < 0
                 or self.hierarchy_range_degree_per_side < 0):
@@ -101,10 +104,15 @@ class RollingSearchConfig:
     use_range_edges: bool = True
     use_hierarchy: bool = True
     upper_ef_search: int = 32
+    coverage_enabled: bool = False
+    coverage_expansions_per_block: int = 1
+    coverage_gateway_candidates: int = 4
 
     def validate(self) -> None:
         if min(self.k, self.ef_search, self.gateway_candidates,
-               self.gateway_seeds, self.upper_ef_search) <= 0:
+               self.gateway_seeds, self.upper_ef_search,
+               self.coverage_expansions_per_block,
+               self.coverage_gateway_candidates) <= 0:
             raise ValueError("search parameters must be positive")
         if self.ef_search < self.k:
             raise ValueError("ef_search must be at least k")
@@ -136,6 +144,66 @@ def _add_bounded_edge(
     if distance < float(distances[row, farthest]):
         current[farthest] = neighbor
         distances[row, farthest] = distance
+
+
+def _build_coverage_metadata(
+    vectors: np.ndarray,
+    global_ids: np.ndarray,
+    timestamps: np.ndarray,
+    block_size: int,
+    gateways_per_block: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Build compact block bounds and diverse representative local IDs."""
+    count = len(global_ids)
+    offsets = np.arange(0, count, block_size, dtype=np.int64)
+    if not len(offsets) or offsets[-1] != count:
+        offsets = np.append(offsets, count).astype(np.int64, copy=False)
+    block_count = max(0, len(offsets) - 1)
+    minimums = np.empty(block_count, dtype=np.int64)
+    maximums = np.empty(block_count, dtype=np.int64)
+    gateways = np.full((block_count, gateways_per_block), -1, dtype=np.int32)
+
+    for block in range(block_count):
+        left, right = int(offsets[block]), int(offsets[block + 1])
+        minimums[block] = int(timestamps[left])
+        maximums[block] = int(timestamps[right - 1])
+        sample_count = min(64, right - left)
+        sample = np.unique(np.linspace(left, right - 1, sample_count, dtype=np.int64))
+        values = np.asarray(vectors[global_ids[sample]], dtype=np.float32)
+        selected: list[int] = []
+
+        def add(local_id: int) -> None:
+            if local_id not in selected and len(selected) < gateways_per_block:
+                selected.append(local_id)
+
+        # Temporal boundaries preserve partial-block utility. A sampled medoid and
+        # farthest-point representatives add semantic diversity.
+        add(left)
+        add(right - 1)
+        if len(selected) < gateways_per_block:
+            centroid = np.mean(values, axis=0)
+            centroid_distances = np.einsum(
+                "ij,ij->i", values - centroid, values - centroid
+            )
+            add(int(sample[int(np.argmin(centroid_distances))]))
+        while len(selected) < min(gateways_per_block, right - left):
+            selected_values = np.asarray(
+                vectors[global_ids[np.asarray(selected, dtype=np.int64)]],
+                dtype=np.float32,
+            )
+            differences = values[:, None, :] - selected_values[None, :, :]
+            minimum_distances = np.min(
+                np.einsum("ijk,ijk->ij", differences, differences), axis=1
+            )
+            for position in np.argsort(-minimum_distances, kind="stable"):
+                before = len(selected)
+                add(int(sample[int(position)]))
+                if len(selected) != before:
+                    break
+            else:
+                break
+        gateways[block, :len(selected)] = selected
+    return offsets, minimums, maximums, gateways
 
 
 def _exact_top_k(
@@ -519,6 +587,13 @@ def build_rolling_index(
                     flush=True,
                 )
 
+        coverage_block_offsets, coverage_block_min_timestamps, \
+            coverage_block_max_timestamps, coverage_block_gateways = \
+            _build_coverage_metadata(
+                vectors, global_ids, ordered_timestamps,
+                config.coverage_block_size, config.coverage_gateways_per_block,
+            )
+
         files = {
             "global_ids": "global_ids.npy",
             "timestamps": "timestamps.npy",
@@ -534,6 +609,10 @@ def build_rolling_index(
             "gateway_ids": "gateway_ids.npy",
             "gateway_rows": "gateway_rows.npy",
             "gateway_neighbors": "gateway_neighbors.npy",
+            "coverage_block_offsets": "coverage_block_offsets.npy",
+            "coverage_block_min_timestamps": "coverage_block_min_timestamps.npy",
+            "coverage_block_max_timestamps": "coverage_block_max_timestamps.npy",
+            "coverage_block_gateways": "coverage_block_gateways.npy",
         }
         arrays = {
             "global_ids": global_ids,
@@ -550,6 +629,10 @@ def build_rolling_index(
             "gateway_ids": gateway_ids[:gateway_count],
             "gateway_rows": gateway_rows,
             "gateway_neighbors": gateway_neighbors[:gateway_count],
+            "coverage_block_offsets": coverage_block_offsets,
+            "coverage_block_min_timestamps": coverage_block_min_timestamps,
+            "coverage_block_max_timestamps": coverage_block_max_timestamps,
+            "coverage_block_gateways": coverage_block_gateways,
         }
         for name, array in arrays.items():
             np.save(temporary / files[name], array, allow_pickle=False)
@@ -571,6 +654,11 @@ def build_rolling_index(
             "source": source or {},
             "construction_seconds": time.perf_counter() - started,
             "gateway_count": gateway_count,
+            "coverage_block_count": len(coverage_block_min_timestamps),
+            "coverage_invariant": (
+                "every block intersecting a strict query component receives the "
+                "configured mandatory expansion budget"
+            ),
             "range_scales_hours": list(range_scales),
             "hierarchy_level_counts": {
                 str(level): int(np.sum(levels >= level))
@@ -604,6 +692,7 @@ class RollingTemporalHNSW:
             (self.directory / "manifest.json").read_text(encoding="utf-8")
         )
         self.config = RollingBuildConfig(**self.manifest["config"])
+        self.vectors = vectors
         files = self.manifest["files"]
         self.global_ids = np.load(self.directory / files["global_ids"], mmap_mode="r")
         self.timestamps = np.load(self.directory / files["timestamps"], mmap_mode="r")
@@ -671,7 +760,29 @@ class RollingTemporalHNSW:
             self.directory / files["gateway_neighbors"], mmap_mode="r"
         )
         self.gateway_timestamps = np.asarray(self.timestamps[self.gateway_ids], dtype=np.int64)
-        self.vectors = vectors
+        if "coverage_block_offsets" in files:
+            self.coverage_block_offsets = np.load(
+                self.directory / files["coverage_block_offsets"], mmap_mode="r"
+            )
+            self.coverage_block_min_timestamps = np.load(
+                self.directory / files["coverage_block_min_timestamps"], mmap_mode="r"
+            )
+            self.coverage_block_max_timestamps = np.load(
+                self.directory / files["coverage_block_max_timestamps"], mmap_mode="r"
+            )
+            self.coverage_block_gateways = np.load(
+                self.directory / files["coverage_block_gateways"], mmap_mode="r"
+            )
+        else:
+            # Existing RT-HNSW artifacts remain query-compatible with this branch.
+            (self.coverage_block_offsets,
+             self.coverage_block_min_timestamps,
+             self.coverage_block_max_timestamps,
+             self.coverage_block_gateways) = _build_coverage_metadata(
+                vectors, self.global_ids, self.timestamps,
+                self.config.coverage_block_size,
+                self.config.coverage_gateways_per_block,
+            )
         if len(self.global_ids) != self.manifest["vector_count"]:
             raise ValueError("rolling-HNSW artifacts do not match manifest")
         if vectors.ndim != 2 or vectors.dtype != np.float32:
@@ -725,6 +836,141 @@ class RollingTemporalHNSW:
             (float(distances[position]), int(local_ids[position]))
             for position in selected
         ], len(local_ids)
+
+    def _edge_groups(
+        self, current: int, config: RollingSearchConfig
+    ) -> list[tuple[str, np.ndarray]]:
+        groups: list[tuple[str, np.ndarray]] = []
+        if config.use_range_edges:
+            groups.extend((
+                ("range", self.range_left_neighbors[current].reshape(-1)),
+                ("range", self.range_right_neighbors[current].reshape(-1)),
+            ))
+        groups.append(("semantic", self.semantic_neighbors[current]))
+        gateway_row = int(self.gateway_rows[current])
+        if config.use_gateway_edges and gateway_row >= 0:
+            neighbor_rows = self.gateway_neighbors[gateway_row]
+            valid_rows = neighbor_rows[neighbor_rows >= 0]
+            groups.append(("gateway", self.gateway_ids[valid_rows]))
+        if config.use_temporal_edges:
+            groups.append(("temporal", self.temporal_neighbors[current]))
+        return groups
+
+    def _coverage_initial_state(
+        self,
+        query: np.ndarray,
+        local_left: int,
+        local_right: int,
+        start: int,
+        end: int,
+        config: RollingSearchConfig,
+    ) -> tuple[
+        list[tuple[float, int]], list[tuple[float, int]], set[int], dict[str, int]
+    ]:
+        """Seed and expand every intersecting block before ANN termination."""
+        candidates: list[tuple[float, int]] = []
+        best: list[tuple[float, int]] = []
+        visited: set[int] = set()
+        diagnostics = {
+            "coverage_blocks_considered": 0,
+            "coverage_blocks_covered": 0,
+            "coverage_expansions": 0,
+            "coverage_gateway_candidates": 0,
+            "coverage_distance_computations": 0,
+            "coverage_cross_block_edges_skipped": 0,
+            "semantic_edges_examined": 0,
+            "range_edges_examined": 0,
+            "gateway_edges_examined": 0,
+            "temporal_edges_examined": 0,
+            "out_of_range_edges_rejected": 0,
+        }
+
+        first_block = max(0, int(np.searchsorted(
+            self.coverage_block_offsets, local_left, side="right"
+        )) - 1)
+        last_block = min(
+            len(self.coverage_block_min_timestamps),
+            int(np.searchsorted(
+                self.coverage_block_offsets, local_right - 1, side="right"
+            )),
+        )
+
+        def retain(distance: float, local_id: int) -> None:
+            heapq.heappush(best, (-distance, local_id))
+            if len(best) > config.ef_search:
+                heapq.heappop(best)
+
+        for block in range(first_block, last_block):
+            if (int(self.coverage_block_max_timestamps[block]) < start or
+                    int(self.coverage_block_min_timestamps[block]) >= end):
+                continue
+            block_left = max(local_left, int(self.coverage_block_offsets[block]))
+            block_right = min(local_right, int(self.coverage_block_offsets[block + 1]))
+            if block_left >= block_right:
+                continue
+            diagnostics["coverage_blocks_considered"] += 1
+
+            stored = np.asarray(self.coverage_block_gateways[block], dtype=np.int64)
+            representative_values = [
+                int(value) for value in stored
+                if block_left <= int(value) < block_right
+            ]
+            representative_values.extend((block_left, block_right - 1))
+            representatives = np.asarray(
+                list(dict.fromkeys(representative_values))[
+                    :config.coverage_gateway_candidates
+                ],
+                dtype=np.int64,
+            )
+            database_ids = self.global_ids[representatives]
+            differences = np.asarray(
+                self.vectors[database_ids], dtype=np.float32
+            ) - query
+            distances = np.einsum("ij,ij->i", differences, differences)
+            diagnostics["coverage_gateway_candidates"] += len(representatives)
+            diagnostics["coverage_distance_computations"] += len(representatives)
+            seed_position = int(np.argmin(distances))
+            seed = int(representatives[seed_position])
+            seed_distance = float(distances[seed_position])
+            visited.add(seed)
+            local_candidates = [(seed_distance, seed)]
+            heapq.heappush(candidates, (seed_distance, seed))
+            retain(seed_distance, seed)
+
+            expanded = 0
+            while local_candidates and expanded < config.coverage_expansions_per_block:
+                _, current = heapq.heappop(local_candidates)
+                expanded += 1
+                for edge_type, neighbors in self._edge_groups(current, config):
+                    for value in neighbors:
+                        neighbor = int(value)
+                        if neighbor < 0:
+                            continue
+                        diagnostics[f"{edge_type}_edges_examined"] += 1
+                        if neighbor < local_left or neighbor >= local_right:
+                            diagnostics["out_of_range_edges_rejected"] += 1
+                            continue
+                        if neighbor < block_left or neighbor >= block_right:
+                            diagnostics["coverage_cross_block_edges_skipped"] += 1
+                            continue
+                        if neighbor in visited:
+                            continue
+                        visited.add(neighbor)
+                        global_id = int(self.global_ids[neighbor])
+                        difference = np.asarray(
+                            self.vectors[global_id], dtype=np.float32
+                        ) - query
+                        distance = float(np.dot(difference, difference))
+                        diagnostics["coverage_distance_computations"] += 1
+                        heapq.heappush(local_candidates, (distance, neighbor))
+                        heapq.heappush(candidates, (distance, neighbor))
+                        retain(distance, neighbor)
+            diagnostics["coverage_expansions"] += expanded
+            if expanded:
+                diagnostics["coverage_blocks_covered"] += 1
+
+        heapq.heapify(best)
+        return candidates, best, visited, diagnostics
 
     def _hierarchical_seed_pairs(
         self,
@@ -851,18 +1097,47 @@ class RollingTemporalHNSW:
         config: RollingSearchConfig,
         entry_gateway_ids: np.ndarray | None = None,
     ) -> dict[str, Any]:
-        upper_seeds, upper_diagnostics = self._hierarchical_seed_pairs(
-            query, local_left, local_right, config
-        )
-        if upper_seeds:
-            seeds = upper_seeds
-            gateway_candidates = 0
-            component_method = "strict_hierarchy"
-        else:
-            seeds, gateway_candidates = self._gateway_seed_pairs(
-                query, start, end, config, entry_gateway_ids
+        coverage_diagnostics = {
+            "coverage_blocks_considered": 0,
+            "coverage_blocks_covered": 0,
+            "coverage_expansions": 0,
+            "coverage_gateway_candidates": 0,
+            "coverage_distance_computations": 0,
+            "coverage_cross_block_edges_skipped": 0,
+        }
+        if config.coverage_enabled:
+            upper_seeds = []
+            upper_diagnostics = {
+                "upper_entry_level": 0, "upper_nodes_visited": 0,
+                "upper_semantic_edges_examined": 0,
+                "upper_range_edges_examined": 0,
+                "upper_temporal_edges_examined": 0,
+                "upper_out_of_range_edges_rejected": 0,
+                "upper_distance_computations": 0,
+                "upper_entry_candidates": 0,
+            }
+            candidates, best, visited, initial = self._coverage_initial_state(
+                query, local_left, local_right, start, end, config
             )
-            component_method = "strict_graph"
+            coverage_diagnostics = {
+                field: initial[field] for field in coverage_diagnostics
+            }
+            seeds = [(distance, local_id) for distance, local_id in candidates]
+            gateway_candidates = 0
+            component_method = "strict_coverage_graph"
+        else:
+            upper_seeds, upper_diagnostics = self._hierarchical_seed_pairs(
+                query, local_left, local_right, config
+            )
+            if upper_seeds:
+                seeds = upper_seeds
+                gateway_candidates = 0
+                component_method = "strict_hierarchy"
+            else:
+                seeds, gateway_candidates = self._gateway_seed_pairs(
+                    query, start, end, config, entry_gateway_ids
+                )
+                component_method = "strict_graph"
         if not seeds:
             # This occurs only for a component smaller than the periodic spacing
             # in the intended configuration. Exact search preserves correctness.
@@ -878,45 +1153,45 @@ class RollingTemporalHNSW:
                 "range_edges_examined": 0, "gateway_edges_examined": 0,
                 "temporal_edges_examined": 0,
                 "out_of_range_edges_rejected": 0,
+                **coverage_diagnostics,
                 **upper_diagnostics,
+                "visited_block_ids": np.unique(
+                    local_ids // self.config.coverage_block_size
+                ).astype(np.int32),
                 "component_method": "exact_no_gateway",
             }
 
-        candidates: list[tuple[float, int]] = []
-        best: list[tuple[float, int]] = []
-        visited: set[int] = set()
-        for distance, local_id in seeds:
-            if local_id in visited:
-                continue
-            visited.add(local_id)
-            heapq.heappush(candidates, (distance, local_id))
-            heapq.heappush(best, (-distance, local_id))
+        if not config.coverage_enabled:
+            candidates = []
+            best = []
+            visited = set()
+            for distance, local_id in seeds:
+                if local_id in visited:
+                    continue
+                visited.add(local_id)
+                heapq.heappush(candidates, (distance, local_id))
+                heapq.heappush(best, (-distance, local_id))
+            initial = {
+                "semantic_edges_examined": 0, "range_edges_examined": 0,
+                "gateway_edges_examined": 0, "temporal_edges_examined": 0,
+                "out_of_range_edges_rejected": 0,
+            }
 
-        semantic_examined = range_examined = gateway_examined = temporal_examined = rejected = 0
+        semantic_examined = initial["semantic_edges_examined"]
+        range_examined = initial["range_edges_examined"]
+        gateway_examined = initial["gateway_edges_examined"]
+        temporal_examined = initial["temporal_edges_examined"]
+        rejected = initial["out_of_range_edges_rejected"]
         distance_computations = (
             gateway_candidates + upper_diagnostics["upper_distance_computations"]
+            + coverage_diagnostics["coverage_distance_computations"]
         )
         while candidates:
             current_distance, current = heapq.heappop(candidates)
             if len(best) >= config.ef_search and current_distance > -best[0][0]:
                 break
 
-            edge_groups: list[tuple[str, np.ndarray]] = []
-            if config.use_range_edges:
-                edge_groups.extend((
-                    ("range", self.range_left_neighbors[current].reshape(-1)),
-                    ("range", self.range_right_neighbors[current].reshape(-1)),
-                ))
-            edge_groups.append(("semantic", self.semantic_neighbors[current]))
-            gateway_row = int(self.gateway_rows[current])
-            if config.use_gateway_edges and gateway_row >= 0:
-                neighbor_rows = self.gateway_neighbors[gateway_row]
-                valid_rows = neighbor_rows[neighbor_rows >= 0]
-                edge_groups.append(("gateway", self.gateway_ids[valid_rows]))
-            if config.use_temporal_edges:
-                edge_groups.append(("temporal", self.temporal_neighbors[current]))
-
-            for edge_type, neighbors in edge_groups:
+            for edge_type, neighbors in self._edge_groups(current, config):
                 for value in neighbors:
                     neighbor = int(value)
                     if neighbor < 0:
@@ -952,13 +1227,18 @@ class RollingTemporalHNSW:
             "distance_computations": distance_computations,
             "nodes_visited": len(visited) + upper_diagnostics["upper_nodes_visited"],
             "gateway_candidates": gateway_candidates,
-            "gateway_seeds": len(seeds),
+            "gateway_seeds": 0 if config.coverage_enabled else len(seeds),
             "semantic_edges_examined": semantic_examined,
             "range_edges_examined": range_examined,
             "gateway_edges_examined": gateway_examined,
             "temporal_edges_examined": temporal_examined,
             "out_of_range_edges_rejected": rejected,
+            **coverage_diagnostics,
             **upper_diagnostics,
+            "visited_block_ids": np.unique(
+                np.fromiter(visited, dtype=np.int64) //
+                self.config.coverage_block_size
+            ).astype(np.int32),
             "component_method": component_method,
         }
 
@@ -1000,8 +1280,15 @@ class RollingTemporalHNSW:
             "upper_out_of_range_edges_rejected": 0,
             "upper_distance_computations": 0,
             "upper_entry_candidates": 0,
+            "coverage_blocks_considered": 0,
+            "coverage_blocks_covered": 0,
+            "coverage_expansions": 0,
+            "coverage_gateway_candidates": 0,
+            "coverage_distance_computations": 0,
+            "coverage_cross_block_edges_skipped": 0,
         }
         candidate_parts: list[np.ndarray] = []
+        visited_block_parts: list[np.ndarray] = []
         methods: list[str] = []
         if eligible_count <= search_config.exact_threshold:
             local_ids = np.concatenate([
@@ -1012,6 +1299,14 @@ class RollingTemporalHNSW:
                 query, self.vectors, self.global_ids, local_ids, search_config.k
             )
             candidate_parts.append(ids)
+            visited_block_parts.extend([
+                np.arange(
+                    left // self.config.coverage_block_size,
+                    (right - 1) // self.config.coverage_block_size + 1,
+                    dtype=np.int32,
+                )
+                for _, _, left, right in components
+            ])
             diagnostics["distance_computations"] = computations
             diagnostics["nodes_visited"] = computations
             methods.append("exact")
@@ -1024,6 +1319,11 @@ class RollingTemporalHNSW:
                         query, self.vectors, self.global_ids, local_ids, search_config.k
                     )
                     candidate_parts.append(ids)
+                    visited_block_parts.append(np.arange(
+                        left // self.config.coverage_block_size,
+                        (right - 1) // self.config.coverage_block_size + 1,
+                        dtype=np.int32,
+                    ))
                     diagnostics["distance_computations"] += computations
                     diagnostics["nodes_visited"] += computations
                     methods.append("exact_component")
@@ -1033,6 +1333,7 @@ class RollingTemporalHNSW:
                     entry_gateway_ids,
                 )
                 candidate_parts.append(result["local_ids"])
+                visited_block_parts.append(result["visited_block_ids"])
                 methods.append(result["component_method"])
                 for field in diagnostics:
                     if field == "upper_entry_level":
@@ -1055,6 +1356,9 @@ class RollingTemporalHNSW:
             "method": "+".join(sorted(set(methods))) if methods else "empty",
             "eligible_count": eligible_count,
             "candidate_count": len(candidates),
+            "visited_block_ids": np.unique(
+                np.concatenate(visited_block_parts)
+            ) if visited_block_parts else np.empty(0, dtype=np.int32),
             **diagnostics,
             "rerank_distance_computations": rerank_computations,
             "routing_ms": routing_ms,
@@ -1090,6 +1394,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--hierarchy-range-degree-per-side", type=int, default=0)
     parser.add_argument("--hierarchy-range-candidate-count", type=int, default=32)
     parser.add_argument("--hierarchy-range-scales-hours", default="")
+    parser.add_argument("--coverage-block-size", type=int, default=512)
+    parser.add_argument("--coverage-gateways-per-block", type=int, default=4)
     parser.add_argument("--progress-every", type=int, default=5_000)
     parser.add_argument("--rebuild", action="store_true")
     return parser
@@ -1121,6 +1427,8 @@ def build_main() -> None:
         hierarchy_range_degree_per_side=args.hierarchy_range_degree_per_side,
         hierarchy_range_candidate_count=args.hierarchy_range_candidate_count,
         hierarchy_range_scales_hours=args.hierarchy_range_scales_hours,
+        coverage_block_size=args.coverage_block_size,
+        coverage_gateways_per_block=args.coverage_gateways_per_block,
     )
     manifest = build_rolling_index(
         vectors, timestamps, args.output, config,
