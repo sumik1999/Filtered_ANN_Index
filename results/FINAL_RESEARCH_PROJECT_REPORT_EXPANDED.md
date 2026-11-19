@@ -137,80 +137,125 @@ indexes and partial boundaries. This explains its high and variable query cost.
 
 # 3. RT-HNSW and the range-aware extension
 
-## 3.1 Base RT-HNSW organization
+## 3.1 The design in plain language
 
-RT-HNSW is one graph over all vectors; temporal buckets are not separate ANN
-indexes. Before construction, source IDs are stably sorted by timestamp. The
-resulting local IDs satisfy the ordering invariant:
+RT-HNSW keeps **one graph**, not one index per time bucket. Its local IDs are
+stable chronological addresses: source records are sorted by `(timestamp,
+source ID)` before insertion, so
 
 > **t(v₀) ≤ t(v₁) ≤ ⋯ ≤ t(v[N−1]).**
 
-Therefore, binary search converts every half-open time interval into a contiguous
-local-ID range.
+A time predicate can therefore be converted by binary search into one or more
+contiguous ID ranges. Inside those ranges, the graph needs different kinds of
+“roads”: semantic roads toward similar tweets, temporal roads that keep nearby
+times connected, and sparse entry points from which a query can begin.
 
-During insertion, construction-only FAISS searches prior vectors for up to 64
-semantic candidates. Bounded reciprocal lists retain the closest; the new
-vector and predecessor receive protected backbone links, and every 512th vector
-becomes a query gateway.
+Construction processes vectors in this chronological order. A temporary FAISS
+HNSW searches only already inserted vectors and proposes up to 64 semantic
+neighbors. It helps build the custom graph but is **not** queried afterward.
 
-## 3.2 Range-aware multi-scale topology
+## 3.2 Edge types and what each one solves
 
-The base design primarily connects semantic neighbors and can lose useful edges
-when a narrow filter removes their destinations. The final range-aware variant
-reallocates the nominal degree budget as follows:
-
-| Edge class | Budget | Function |
+| Stored edge type | Per-node budget | Meaning and purpose |
 |---|---:|---|
-| Semantic | 20 | Global vector-space proximity |
-| 24-hour left/right | 2 + 2 | Short-range temporal compatibility |
-| 168-hour left/right | 2 + 2 | Weekly-scale compatibility |
-| 720-hour left/right | 2 + 2 | Broad-range compatibility |
-| Protected predecessor/successor | Separate | Guaranteed temporal backbone |
+| Semantic | 20 | Closest embedding neighbors; provides the main similarity search paths |
+| Protected temporal | predecessor + successor | Immediate chronological neighbors; keeps an interval traversable even when semantic links leave it |
+| 24-hour range | 2 left + 2 right | Similar nodes likely to coexist in a short time filter |
+| 168-hour range | 2 left + 2 right | Weekly-scale alternatives when short links are insufficient |
+| 720-hour range | 2 left + 2 right | Longer temporal jumps for broad predicates |
+| Gateway shortcut | up to 8 per gateway | Semantic links between sparse periodic gateways; optional during query traversal |
 
-At scale **W**, semantic proposals, sampled prior vectors inside **W**, and
-immediate predecessors are ranked by:
+**Semantic edges.** The 20 closest proposals are stored in bounded reciprocal
+lists. They answer “where is a more similar vector?” but know nothing about the
+query's time range.
+
+**Protected temporal edges.** Every inserted node links backward to its
+immediate predecessor, and that predecessor links forward to it. These two
+slots are separate from semantic storage and cannot be evicted. They form a
+chronological backbone, although following many one-step links can be slow.
+
+**Multi-scale range edges.** For each width **W** in 24, 168, and 720 hours,
+prior semantic proposals, sampled in-window nodes, and immediate predecessors
+are ranked by:
 
 > **score(u, vᵢ) = d(u, vᵢ) ÷ [max(0, 1 − (tᵢ − tᵤ) ÷ W) + ε].**
 
-The best two form left and reciprocal right edges. Separate arrays prevent
-broad or future links from evicting short-range historical links.
+Low scores favor both semantic similarity and temporal co-eligibility. Two
+historical edges are stored on the new node and reciprocal future-facing edges
+on older nodes. Left/right and scale-specific arrays are independent, so a
+720-hour edge cannot displace a 24-hour edge or a future edge.
 
-## 3.3 Strict query traversal
+**Gateway shortcut edges.** Periodic gateways may also connect to up to eight
+semantically nearest earlier gateways, with bounded reciprocal links. This is a
+stored shortcut class, distinct from using gateways as query entry points. The
+controlled flat-versus-coverage result disables these optional shortcut edges,
+so its difference comes from scheduling rather than extra topology.
 
-Binary search maps each component to `[local_left, local_right)`. Up to 5,000
-eligible vectors use exact search; otherwise, four in-range gateways seed the
-candidate and `efSearch` result heaps. Every destination first passes:
+<div class="page-break"></div>
 
-```text
-if neighbor < local_left or neighbor >= local_right: reject
-else if unseen: compute distance and update the beam
+```{=openxml}
+<w:p><w:r><w:br w:type="page"/></w:r></w:p>
 ```
 
-## 3.4 Working query example and design decisions
+## 3.3 What a periodic gateway does
+
+A gateway is an ordinary vector marked as a possible **starting point**; it is
+not a separate index and does not bypass filtering. Every 512th chronological
+node is marked, which spreads entry points through time. Gateway IDs and
+timestamps are stored in sorted order.
+
+For each graph-searched predicate component, query seeding is:
+
+1. binary-search the gateway directory to keep only gateways inside the
+   component;
+2. sample at most 16 of them at evenly spaced temporal positions, preventing a
+   dense sub-period from supplying every candidate;
+3. compute distance from **q** only for these valid candidates; and
+4. place the closest four into the candidate heap and retained-result heap.
+
+Thus “16 gateway candidates” means at most 16 scored possible entries, while
+“four gateway seeds” means the four that actually start traversal. If a short
+component contains no periodic gateway, the implementation performs exact
+component search rather than entering through an out-of-range node.
+
+## 3.4 Strict traversal after seeding
+
+The closest heap item is expanded first. For each of its enabled semantic,
+range, protected-temporal, and optional gateway-shortcut edges, the destination
+must pass the component boundary test before its vector is read:
+
+```text
+if neighbor < local_left or neighbor >= local_right: reject without scoring
+else if unseen: score it and update the efSearch beam
+```
+
+Search stops when the closest unexpanded candidate is farther than the worst
+item retained in the full `efSearch` beam. Distances are exact for examined
+vectors, but the set reached through the graph is approximate. Disjoint
+predicate components receive independent beams; their candidates are then
+merged, deduplicated, and reranked.
+
+## 3.5 Working query from predicate to result
 
 Use the same illustrative **q**, `k=3`, and predicate **P₁ ∪ P₂**. Binary search
-maps the components to local-ID ranges `[28,700, 32,350)` and
-`[35,120, 37,600)`. Their union has 6,130 vectors, so it exceeds the 5,000-vector
-exact threshold and enters graph search.
+maps it to `[28,700, 32,350)` and `[35,120, 37,600)`, containing 6,130 vectors,
+so the 5,000-vector exact fallback does not apply.
 
-1. The gateway directory identifies at most 16 in-range candidates; the four
-   closest valid gateways seed each component's beam.
-2. Expanding gateway `v₂₈₈₀₀` follows a 168-hour range edge to `v₂₉₀₄₄` and
-   semantic links within **P₁**. Gateway `v₃₅₈₄₀` reaches `v₃₆₁₀₄` in **P₂**.
-3. An edge to `v₂₇₉₉₀` fails the local-ID test and is rejected **before** its
-   vector row is read. Valid candidates update the `efSearch=256` beam.
-4. When the next candidate is farther than the worst retained beam element,
-   traversal stops. Exact reranking of visited eligible candidates returns
-   `(v₃₆₁₀₄, 0.08)`, `(v₂₉₀₄₄, 0.11)`, and `(v₃₅₄₁₂, 0.14)`.
+1. **P₁** contains seven periodic gateways and **P₂** contains five; all are
+   eligible candidates because each count is below 16. Their exact distances
+   are computed, and up to four per component become seeds.
+2. Expanding gateway `v₂₉₁₈₃` follows a 168-hour left edge to `v₂₉₀₄₄` and
+   semantic edges inside **P₁**. Gateway `v₃₅₈₃₉` reaches `v₃₆₁₀₄` in **P₂**.
+3. An edge to `v₂₇₉₉₀` fails the ID-range test and is rejected before vector
+   access. Other valid destinations compete by query distance in the beam.
+4. Termination and final reranking return `(v₃₆₁₀₄, 0.08)`,
+   `(v₂₉₀₄₄, 0.11)`, and `(v₃₅₄₁₂, 0.14)`.
 
-This illustrative run misses `(v₃₁₉₈₀, 0.06)` because no explored path reaches
-its temporal region; that is approximation, not a filter error. Disjoint
-components use independent beams before global deduplication and reranking.
-
-**Rationale:** chronological IDs enable binary-search filtering; construction
-FAISS supplies semantic candidates; protected links preserve connectivity;
-separate budgets prevent edge-class eviction; and exact fallback removes small-
-range approximation. Late records require repair, rebuild, or a delta index.
+The illustrative flat search misses `(v₃₁₉₈₀, 0.06)` because its region never
+enters the beam. This is an ANN navigation miss, not a temporal-filter error.
+Chronological IDs, protected edges, separate edge budgets, and valid gateway
+seeds make search robust; they do not make it exact. Late records still require
+repair, rebuild, or a delta index to preserve chronological addressing.
 
 <div class="page-break"></div>
 
@@ -220,71 +265,73 @@ range approximation. Late records require repair, rebuild, or a delta index.
 
 # 4. Coverage-bounded range-aware RT-HNSW
 
-## 4.1 Purpose and metadata
+## 4.1 What changes—and what does not
 
-A global beam can concentrate on a few attractive time regions. Coverage leaves
-the graph unchanged but requires every intersecting region to participate.
-Chronological IDs form 512-vector blocks; each stores ID offsets, conservative
-time bounds, and four sampled representatives: first, last, centroid-nearest,
-and farthest-point. The 100k overlay is approximately 8 KB.
+The third design keeps the **same graph and edge types**: it adds no block edges
+and duplicates no vectors. It changes entry scheduling because one global beam
+may concentrate on a few attractive regions. Chronological IDs are divided into
+512-vector blocks with conservative time bounds and up to four **coverage
+representatives**. These block gateways differ from periodic gateways:
 
-## 4.2 Coverage invariant
+| Entry concept | Scope | Selection | Role |
+|---|---|---|---|
+| Periodic gateway | One every 512 global IDs | Fixed chronological position | Supplies a few entries for ordinary flat search |
+| Coverage representative | Up to four inside every block | First, last, centroid-nearest, and farthest-point samples | Forces every intersecting block to supply a local entry |
 
-For query component **Q**, let **B_Q** contain every block whose conservative
-interval intersects **Q**. A block is removed only when its maximum timestamp is
-below the query start or its minimum is at/above the query end. The mandatory
-phase enforces the invariant:
+First/last cover temporal extremes, centroid-nearest covers the semantic center,
+and farthest-point adds diversity. Partial blocks use strict boundary IDs when
+stored representatives lie outside the predicate. The 100k sidecar is about
+8 KB.
+
+## 4.2 Coverage guarantee
+
+For component **Q**, let **B_Q** be every block whose conservative time interval
+intersects **Q**. A block is pruned only when its maximum timestamp is before
+**Q**, or its minimum is at/after the half-open end. The mandatory phase enforces:
 
 > **For every block Bᵢ in B_Q: expanded(Bᵢ) ≥ e.**
 
-Here, **e** is the configured block-local expansion count. This guarantees
-**temporal block coverage**, not examination of every vector and not exact
-nearest-neighbor recall.
+This means each eligible region receives work. It does **not** mean that every
+vector is examined, that all graph paths are followed, or that recall is 1.0.
 
-## 4.3 Two-stage search procedure
+## 4.3 How block gateways use the graph edges
 
-**Coverage stage.** For every intersecting block, discard out-of-component
-representatives, add strict boundaries for a partial block, score up to **g**
-representatives, and expand the closest seed at least **e** times. Invalid
-neighbors are rejected; cross-block edges are deferred.
+Each block filters representatives to the strict component, scores at most
+four, selects the nearest seed, and expands it through existing semantic,
+multi-scale range, and protected temporal edges. During this phase, a destination
+must remain inside both the component **and its block**. Cross-block edges are
+deferred so one block cannot satisfy another's obligation. Once all blocks are
+covered, frontiers merge and ordinary strict traversal may follow eligible
+cross-block edges. Optional periodic gateway shortcuts are disabled in both
+controlled methods.
 
-**ANN stage.** Merge local frontiers into one candidate heap, then resume normal
-strict range-aware search with the configured `efSearch` capacity.
-
-The mandatory queue ignores ordinary HNSW termination. For **R** blocks, **g**
-representatives, degree **M**, mandatory effort **e**, dimension **d**, and
-**E** later ANN expansions, work is:
+For **R** blocks, **g** representatives, graph degree **M**, mandatory effort
+**e**, dimension **d**, and **E** later ANN expansions:
 
 > **Query work = O(R·g·d + R·e·M·d + E·M·d).**
 
-Coverage is deterministic, but cost grows with temporal width; therefore it is
-also tested at matched distance computations.
+The first two terms are the explicit price of guaranteed regional participation.
 
-## 4.4 Working query example and design decisions
+## 4.4 Working query from blocks to result
 
-Apply coverage scheduling to the same **q**, `k=3`, and ID components
-`[28,700, 32,350)` and `[35,120, 37,600)`. With 512-vector blocks, they
-intersect blocks **B₅₆–B₆₃** and **B₆₈–B₇₃**.
+For the same components `[28,700, 32,350)` and `[35,120, 37,600)`, 512-vector
+partitioning identifies **B₅₆–B₆₃** and **B₆₈–B₇₃**: 14 blocks in total.
 
-1. Conservative min/max tests retain all 14 intersecting blocks. Boundary
-   representatives outside the two components are discarded.
-2. Up to four valid representatives per block are scored. The nearest seed in
-   every block receives at least one local expansion; cross-block edges are
-   deferred during this mandatory phase.
-3. Expansion in **B₆₂** discovers `v₃₁₉₈₀`, the candidate that the ordinary
-   global beam missed. Only after every retained block records one expansion are
-   all local frontiers merged.
-4. The normal strict beam resumes and exact reranking returns
-   `(v₃₁₉₈₀, 0.06)`, `(v₃₆₁₀₄, 0.08)`, and `(v₂₉₀₄₄, 0.11)`.
+1. Conservative bounds retain all 14. Representatives outside the exact
+   component are removed; boundary fallbacks keep partial blocks seedable.
+2. Up to four representatives are scored in each block. The nearest becomes a
+   local seed and receives at least one in-block expansion. Ordinary beam
+   termination cannot stop this mandatory phase.
+3. In **B₆₂**, a representative's existing range or semantic edge reaches
+   `v₃₁₉₈₀`. This is the candidate missed by flat scheduling. Only after all 14
+   blocks are marked covered are their frontiers merged.
+4. Global strict traversal and reranking return `(v₃₁₉₈₀, 0.06)`,
+   `(v₃₆₁₀₄, 0.08)`, and `(v₂₉₀₄₄, 0.11)`.
 
-The example explains the mechanism, not a promise of improvement: coverage
-ensures regional participation, while neighbors remain approximate.
-
-**Rationale.** The sidecar isolates scheduling from topology. Fixed-population
-blocks bound metadata; conservative bounds cannot prune an eligible block.
-Diverse representatives and separate queues prevent premature regional loss,
-and strict expansion preserves the no-out-of-range-scoring rule. Coverage is
-not exhaustive search.
+Coverage can repair a missed region, but extra seeds consume budget and a
+nearest vector can remain undiscovered inside a visited block. The sidecar
+separates scheduling from topology; conservative bounds and strict edge checks
+prevent false-negative pruning and out-of-range scoring.
 
 <div class="page-break"></div>
 

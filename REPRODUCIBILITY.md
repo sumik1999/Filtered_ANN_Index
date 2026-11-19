@@ -1091,7 +1091,7 @@ partition with no advancing event time can hold the global watermark back.
 | Coverage design | `docs/COVERAGE_AWARE_RT_HNSW.md` |
 | Multi-scale analysis | `results/twitter_rt_hnsw_100k/MULTISCALE_RANGE_ANALYSIS.md` |
 | Dataset design | `Twitter_data/workloads/QUERY_DATASET_DESIGN.md` |
-| Expanded final report (six pages) | `results/FINAL_RESEARCH_PROJECT_REPORT_EXPANDED.md` |
+| Expanded final report (seven pages) | `results/FINAL_RESEARCH_PROJECT_REPORT_EXPANDED.md` |
 | Submission DOCX/PDF | `deliverables/research_project_submission/` |
 | Kafka architecture | `docs/KAFKA_INCREMENTAL_RT_HNSW_ARCHITECTURE.md` on `RT-HNSW-kafka-ingestion` |
 
