@@ -47,6 +47,11 @@ main
         └── RT-HNSW-coverage-aware
 ```
 
+> **Branch context:** `main` is intentionally the minimal synthetic harness.
+> The detailed Twitter, RT-HNSW, coverage, and final-report instructions below
+> describe `RT-HNSW-coverage-aware`. Check out that branch before running those
+> commands. Kafka and bitmap commands require their respective branches.
+
 Inspect the live local/remote status before choosing a branch:
 
 ```bash
