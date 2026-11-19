@@ -28,7 +28,7 @@ also contain the Kafka, bitmap, or expanded strict-filter test work.
 | `main` | Original synthetic temporal-ANN harness and exact reference methods | Smallest stable starting point |
 | `feature/hnsw-idselector` | FAISS HNSW filtering with `IDSelectorBitmap` | Independent experiment forked from `main` |
 | `feature/hnsw-post-filter` | Global HNSW post-filtering, fixed temporal HNSW, and the Twitter baseline | Foundation of the RT-HNSW lineage |
-| `RT-HSNW` | Flat RT-HNSW, range and multi-scale edges, hierarchy, upper-range experiment, and gateway oracle | Shared RT-HNSW research base; the historical branch name contains the `HSNW` typo |
+| `RT-HNSW` | Flat RT-HNSW, range and multi-scale edges, hierarchy, upper-range experiment, and gateway oracle | Shared RT-HNSW research base for the later experimental branches |
 | `RT-HNSW-filter-tests` | Rigorous half-open-filter, vector-access, differential, and graph-isolation tests | Use to audit strict filtering independently of later topology work |
 | `RT-HNSW-kafka-ingestion` | Event-time ordering, transactional Kafka stages, durable incremental writer, immutable generations, and live snapshots | Use for online-update and recovery work |
 | `RT-HNSW-temporal-bitmaps` | Packed epoch adjacency, temporal bitmaps, regional portals, and Kafka continuation | Extends the Kafka lineage with the bitmap topology |
@@ -40,7 +40,7 @@ A simplified lineage is:
 main
 ├── feature/hnsw-idselector
 └── feature/hnsw-post-filter
-    └── RT-HSNW
+    └── RT-HNSW
         ├── RT-HNSW-filter-tests
         ├── RT-HNSW-kafka-ingestion
         │   └── RT-HNSW-temporal-bitmaps
