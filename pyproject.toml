@@ -19,6 +19,9 @@ twitter = [
   "huggingface-hub>=0.27",
   "sentence-transformers>=3.3",
 ]
+kafka = [
+  "confluent-kafka>=2.6",
+]
 
 [project.scripts]
 temporal-ann-benchmark = "temporal_ann.benchmark:main"
@@ -45,6 +48,9 @@ build-twitter-rt-hnsw = "temporal_ann.twitter_ann.rolling_hnsw:build_main"
 generate-twitter-rt-workload = "temporal_ann.twitter_ann.rolling_benchmark:generate_main"
 benchmark-twitter-rt-hnsw = "temporal_ann.twitter_ann.rolling_benchmark:benchmark_main"
 benchmark-twitter-gateway-oracle = "temporal_ann.twitter_ann.gateway_oracle:main"
+kafka-twitter-producer = "temporal_ann.twitter_ann.streaming.kafka_pipeline:producer_main"
+kafka-twitter-embedder = "temporal_ann.twitter_ann.streaming.kafka_pipeline:embedder_main"
+kafka-twitter-orderer = "temporal_ann.twitter_ann.streaming.kafka_pipeline:orderer_main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

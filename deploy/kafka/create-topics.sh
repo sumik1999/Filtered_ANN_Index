@@ -28,6 +28,15 @@ create_topic twitter.index.dlq.v1 3 2592000000
 "$KAFKA_TOPICS" \
   --bootstrap-server "$BOOTSTRAP_SERVER" \
   --create --if-not-exists \
+  --topic twitter.orderer.state.v1 \
+  --partitions 1 \
+  --replication-factor 1 \
+  --config cleanup.policy=compact \
+  --config min.cleanable.dirty.ratio=0.01
+
+"$KAFKA_TOPICS" \
+  --bootstrap-server "$BOOTSTRAP_SERVER" \
+  --create --if-not-exists \
   --topic twitter.index.checkpoints.v1 \
   --partitions 1 \
   --replication-factor 1 \

@@ -66,6 +66,7 @@ Twitter source
 | `twitter.index.ordered.v1` | 1 | `index_sequence` | Indefinite | Canonical replay log for one index |
 | `twitter.index.late.v1` | 3 | `tweet_id` | 30 days | Events behind the committed watermark |
 | `twitter.index.dlq.v1` | 3 | `tweet_id` | 30 days | Invalid schema, embedding or validation failures |
+| `twitter.orderer.state.v1` | 1 | state key | Compacted | Transactional orderer buffer, dedupe and watermark changelog |
 | `twitter.index.checkpoints.v1` | 1 | `index_name` | Compacted | Published generation and committed sequence metadata |
 
 The ordered topic must not be compacted because it is the authoritative reconstruction log. Compression should be `zstd`, and producers should use `acks=all` with idempotence enabled.
@@ -375,10 +376,19 @@ Require identical chronological IDs, timestamps and protected temporal links. Se
 
 ### Phase 1: ordered log only
 
-- Implement producer, validator and deterministic embedding stub.
-- Implement watermark orderer and late-event topic.
-- Prove monotonic ordering, contiguous sequences and restart correctness.
-- Do not modify the index yet.
+Implemented in this branch:
+
+- validated JSONL producer;
+- deterministic normalized development embedding worker;
+- bounded event-time watermark orderer;
+- contiguous index-sequence allocation;
+- duplicate/conflict detection and late-event routing; and
+- a transactionally written compacted state changelog for restart recovery.
+
+The Kafka adapter atomically commits ordered/late/DLQ output, orderer state and
+embedded-input offsets in one Kafka transaction. The in-memory state is a cache
+reconstructed from `twitter.orderer.state.v1` after restart. Broker-level failure
+injection remains required before Phase 1 is considered production-complete.
 
 ### Phase 2: durable incremental writer
 
