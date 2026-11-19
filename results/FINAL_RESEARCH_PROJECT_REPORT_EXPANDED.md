@@ -174,16 +174,24 @@ immediate predecessor, and that predecessor links forward to it. These two
 slots are separate from semantic storage and cannot be evicted. They form a
 chronological backbone, although following many one-step links can be slow.
 
-**Multi-scale range edges.** For each width **W** in 24, 168, and 720 hours,
-prior semantic proposals, sampled in-window nodes, and immediate predecessors
-are ranked by:
+**Multi-scale range edges.** The evaluated horizons are 24 hours (one day),
+168 hours (one week—not 120 hours), and 720 hours (approximately 30 days).
+They are rolling construction horizons, not calendar buckets and not limits on
+query width. When node **vᵢ** is inserted, each scale independently considers
+prior semantic proposals, sampled nodes from the preceding **W** hours, and
+immediate predecessors. Candidates are ranked by:
 
 > **score(u, vᵢ) = d(u, vᵢ) ÷ [max(0, 1 − (tᵢ − tᵤ) ÷ W) + ε].**
 
-Low scores favor both semantic similarity and temporal co-eligibility. Two
-historical edges are stored on the new node and reciprocal future-facing edges
-on older nodes. Left/right and scale-specific arrays are independent, so a
-720-hour edge cannot displace a 24-hour edge or a future edge.
+The score rewards semantic closeness while penalizing candidates near the edge
+of the horizon. At every scale, the best two older candidates become left edges
+from **vᵢ**, and bounded reciprocal links become future-facing right edges on
+the older nodes. Thus 24-hour edges support short filtered intervals, 168-hour
+edges provide weekly jumps, and 720-hour edges avoid long chains during broad
+monthly queries. Their arrays and budgets are independent: a monthly edge cannot
+evict a daily edge, a future edge, or the protected backbone. During search all
+scales may be examined, but a destination outside the exact half-open predicate
+is rejected before its vector distance is computed.
 
 **Gateway shortcut edges.** Periodic gateways may also connect to up to eight
 semantically nearest earlier gateways, with bounded reciprocal links. This is a
