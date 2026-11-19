@@ -1,6 +1,10 @@
 # Temporal ANN benchmark
 
-A benchmark harness for evaluating vector search over timestamped objects. It includes workload generation, a correctness oracle, exact reference strategies, a global FAISS HNSW baseline, and persistent fixed-width temporal HNSW indexes.
+A research harness for temporal-filtered approximate nearest-neighbor search.
+It includes synthetic and Twitter workloads, exact correctness oracles, global
+and bucketed FAISS HNSW baselines, rolling temporal HNSW designs, coverage-aware
+search, and separate experimental branches for strict-filter testing, Kafka
+updates, and temporal bitmaps.
 
 ## Included
 
@@ -12,6 +16,45 @@ A benchmark harness for evaluating vector search over timestamped objects. It in
 - Reference temporal pre-filter, exact global post-filter proxy, and fixed temporal partition strategies.
 
 The global post-filter implementation is deliberately named a **proxy**: it computes an exact global ranking and applies ANN-style over-fetch/filter semantics. Its recall and candidate counts are useful, but its latency is not representative of an ANN index. A real ANN backend is the next implementation step.
+
+## Branch guide
+
+The repository uses research branches rather than placing every experiment on
+`main`. The branches are parallel lineages: the latest coverage report does not
+also contain the Kafka, bitmap, or expanded strict-filter test work.
+
+| Branch | Purpose | Relationship / when to use it |
+|---|---|---|
+| `main` | Original synthetic temporal-ANN harness and exact reference methods | Smallest stable starting point |
+| `feature/hnsw-idselector` | FAISS HNSW filtering with `IDSelectorBitmap` | Independent experiment forked from `main` |
+| `feature/hnsw-post-filter` | Global HNSW post-filtering, fixed temporal HNSW, and the Twitter baseline | Foundation of the RT-HNSW lineage |
+| `RT-HSNW` | Flat RT-HNSW, range and multi-scale edges, hierarchy, upper-range experiment, and gateway oracle | Shared RT-HNSW research base; the historical branch name contains the `HSNW` typo |
+| `RT-HNSW-filter-tests` | Rigorous half-open-filter, vector-access, differential, and graph-isolation tests | Use to audit strict filtering independently of later topology work |
+| `RT-HNSW-kafka-ingestion` | Event-time ordering, transactional Kafka stages, durable incremental writer, immutable generations, and live snapshots | Use for online-update and recovery work |
+| `RT-HNSW-temporal-bitmaps` | Packed epoch adjacency, temporal bitmaps, regional portals, and Kafka continuation | Extends the Kafka lineage with the bitmap topology |
+| `RT-HNSW-coverage-aware` | Coverage blocks, mandatory regional exploration, evaluations, final reports, and reproducibility guide | Current report branch and recommended branch for the final project artifacts |
+
+A simplified lineage is:
+
+```text
+main
+├── feature/hnsw-idselector
+└── feature/hnsw-post-filter
+    └── RT-HSNW
+        ├── RT-HNSW-filter-tests
+        ├── RT-HNSW-kafka-ingestion
+        │   └── RT-HNSW-temporal-bitmaps
+        └── RT-HNSW-coverage-aware
+```
+
+Inspect the live local/remote status before choosing a branch:
+
+```bash
+git fetch --all --prune
+git branch -a -vv
+git log --all --graph --decorate --oneline --simplify-by-decoration
+git worktree list
+```
 
 ## Set up
 
@@ -299,6 +342,59 @@ gateway plan and failed oracle acceptance result are documented in
 
 ## Test
 
+Run the checked-out branch's unit tests and a self-contained synthetic smoke
+benchmark:
+
 ```bash
-python -m unittest discover -s tests
+scripts/test-current-branch.sh all
 ```
+
+The smoke benchmark writes only to a temporary directory and removes it on
+exit. Individual modes are available:
+
+```bash
+scripts/test-current-branch.sh unit
+scripts/test-current-branch.sh smoke
+```
+
+Set a specific interpreter when needed:
+
+```bash
+PYTHON=.venv/bin/python scripts/test-current-branch.sh all
+```
+
+The direct unit-test command remains:
+
+```bash
+PYTHONPATH=src python -m unittest discover -s tests -v
+```
+
+### Test another branch without disturbing this checkout
+
+Use a detached worktree, create its environment, run its version of the tests,
+and remove it afterward:
+
+```bash
+BRANCH=RT-HNSW-kafka-ingestion
+WORKTREE="../temporal-ann-test-${BRANCH}"
+
+git worktree add --detach "$WORKTREE" "$BRANCH"
+python3 -m venv "$WORKTREE/.venv"
+"$WORKTREE/.venv/bin/python" -m pip install -e "$WORKTREE[twitter,kafka]"
+(
+  cd "$WORKTREE"
+  PYTHONPATH=src .venv/bin/python -m unittest discover -s tests -v
+  PYTHONPATH=src .venv/bin/python -m temporal_ann.benchmark \
+    --size 2000 --dimensions 16 --queries 3 \
+    --widths 0.01,0.1 --fragments 1,4 --ks 10 \
+    --data-dir /tmp/temporal-ann-data \
+    --output /tmp/temporal-ann-results
+)
+git worktree remove "$WORKTREE"
+```
+
+Use `-e "$WORKTREE"` for `main` and the early feature branches, or
+`-e "$WORKTREE[twitter]"` for Twitter/RT-HNSW branches without Kafka. Docker is
+required only for broker-level Kafka integration; unit tests do not require a
+running broker. The complete data and experiment reproduction procedure is in
+[`REPRODUCIBILITY.md`](REPRODUCIBILITY.md).
