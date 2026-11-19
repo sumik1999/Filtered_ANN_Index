@@ -60,9 +60,84 @@ is rejected before its vector is read or its distance is computed.
 <w:p><w:r><w:br w:type="page"/></w:r></w:p>
 ```
 
-# 2. RT-HNSW and the range-aware extension
+# 2. Density-balanced bucket HNSW
 
-## 2.1 Base RT-HNSW organization
+## 2.1 Construction and purpose
+
+Bucket HNSW restricts the temporal domain before ANN traversal. Equal-width
+calendar buckets are poorly suited to bursty Twitter traffic because their
+populations differ sharply. The density-balanced design instead stably sorts
+all records by `(timestamp, source ID)`, chooses 64 boundaries with approximately
+equal populations without splitting equal timestamps, and builds one FAISS
+`IndexHNSWFlat` per bucket. Each index uses `M=32` and
+`efConstruction=200`; persisted local-to-global maps recover source IDs.
+
+The bucket directory stores each bucket's half-open timestamp bounds and row
+count. Thus routing is exact even though search inside a selected bucket is
+approximate.
+
+## 2.2 Query execution
+
+Intervals are first sorted and merged into a disjoint union. The directory then
+labels every intersecting bucket as **full** or **partial**. A full bucket can be
+searched directly because every member satisfies the predicate. For a partial
+boundary bucket, overlap selectivity controls overfetch (`2×`, with boundary
+safety `1.25`); timestamps are checked exactly after FAISS returns local IDs.
+All candidates are translated to global IDs, deduplicated across interval
+components, and reranked by exact query distance.
+
+```text
+predicate union → bucket directory → full/partial bucket searches
+                → exact boundary filter → global-ID deduplication
+                → exact candidate rerank → top k
+```
+
+The final configuration uses `efSearch=128`. Half-open checks are retained at
+partial boundaries, so a record exactly at an interval end is rejected.
+
+## 2.3 Working query example
+
+Consider an illustrative query embedding **q**, `k=3`, and two disjoint time
+components **P₁** and **P₂**. In the persisted directory, **P₁** intersects the
+tail of bucket **B₁₈**, all of **B₁₉**, and the head of **B₂₀**; **P₂** cuts
+through **B₂₅**.
+
+1. Routing produces `{B₁₈ partial, B₁₉ full, B₂₀ partial, B₂₅ partial}`.
+2. `B₁₉` runs ordinary HNSW. The other three request enlarged candidate sets.
+3. Suppose `B₁₈` returns a close record at the exact end of **P₁**. The
+   half-open test removes it before merging. A record appearing through
+   overlapping routes is deduplicated by global ID.
+4. Exact reranking of the remaining vectors returns
+   `(v₃₁₉₈₀, 0.06)`, `(v₃₆₁₀₄, 0.08)`, and `(v₂₉₀₄₄, 0.11)`.
+
+Distances are illustrative squared-L2 values. In the measured experiment,
+`k=100`; the sequence is unchanged. The example shows how partition routing
+can approach exact results without scanning all 990,000 vectors, while partial
+buckets still incur extra work.
+
+## 2.4 Design rationale and limitation
+
+| Decision | Reason |
+|---|---|
+| Equal-population rather than equal-time buckets | Balance index size under bursty arrival density |
+| Preserve equal-timestamp groups | Avoid ambiguous boundary ownership |
+| Full versus partial routing | Avoid unnecessary filtering inside fully covered buckets |
+| Exact boundary checks | Preserve authoritative half-open predicates |
+| Global deduplication and reranking | Produce one correctly ordered result list across indexes |
+
+The design achieved 0.99908 Recall@100, but narrow predicates can occupy only a
+small fraction of a large bucket. Fragmented predicates also fan out to more
+indexes and partial boundaries. This explains its high and variable query cost.
+
+<div class="page-break"></div>
+
+```{=openxml}
+<w:p><w:r><w:br w:type="page"/></w:r></w:p>
+```
+
+# 3. RT-HNSW and the range-aware extension
+
+## 3.1 Base RT-HNSW organization
 
 RT-HNSW is one graph over all vectors; temporal buckets are not separate ANN
 indexes. Before construction, source IDs are stably sorted by timestamp. The
@@ -73,13 +148,12 @@ resulting local IDs satisfy the ordering invariant:
 Therefore, binary search converts every half-open time interval into a contiguous
 local-ID range.
 
-During insertion, a temporary FAISS HNSW searches only prior vectors and
-returns up to 64 semantic candidates. Bounded reciprocal lists retain the
-closest candidates. The new vector and its predecessor receive protected
-backbone links, and every 512th vector becomes a query gateway. FAISS is used
-only for construction; queries traverse the persisted custom adjacency.
+During insertion, construction-only FAISS searches prior vectors for up to 64
+semantic candidates. Bounded reciprocal lists retain the closest; the new
+vector and predecessor receive protected backbone links, and every 512th vector
+becomes a query gateway.
 
-## 2.2 Range-aware multi-scale topology
+## 3.2 Range-aware multi-scale topology
 
 The base design primarily connects semantic neighbors and can lose useful edges
 when a narrow filter removes their destinations. The final range-aware variant
@@ -93,47 +167,50 @@ reallocates the nominal degree budget as follows:
 | 720-hour left/right | 2 + 2 | Broad-range compatibility |
 | Protected predecessor/successor | Separate | Guaranteed temporal backbone |
 
-At scale **W**, candidates combine semantic proposals, up to 64 evenly sampled
-prior vectors inside **W**, and 16 immediate predecessors. They are ranked by:
+At scale **W**, semantic proposals, sampled prior vectors inside **W**, and
+immediate predecessors are ranked by:
 
 > **score(u, vᵢ) = d(u, vᵢ) ÷ [max(0, 1 − (tᵢ − tᵤ) ÷ W) + ε].**
 
-The best two become left edges from **vᵢ** and reciprocal right edges on older
-nodes. Separate scale and direction arrays prevent broad or future links from
-evicting short-range historical links.
+The best two form left and reciprocal right edges. Separate arrays prevent
+broad or future links from evicting short-range historical links.
 
-## 2.3 Strict query traversal
+## 3.3 Strict query traversal
 
-Binary search maps each normalized predicate component to
-`[local_left, local_right)`. Up to 5,000 eligible vectors use exact search;
-otherwise, the closest four of at most 16 in-range gateways seed a minimum
-candidate heap and a maximum result heap of size `efSearch`. Every semantic,
-temporal, or range destination first passes the local-ID boundary test:
+Binary search maps each component to `[local_left, local_right)`. Up to 5,000
+eligible vectors use exact search; otherwise, four in-range gateways seed the
+candidate and `efSearch` result heaps. Every destination first passes:
 
 ```text
 if neighbor < local_left or neighbor >= local_right: reject
 else if unseen: compute distance and update the beam
 ```
 
-## 2.4 Working sequence and design decisions
+## 3.4 Working query example and design decisions
 
-```text
-predicate → local-ID components → exact fallback or gateway seeds
-          → strict semantic + temporal + range beam → exact rerank
-```
+Use the same illustrative **q**, `k=3`, and predicate **P₁ ∪ P₂**. Binary search
+maps the components to local-ID ranges `[28,700, 32,350)` and
+`[35,120, 37,600)`. Their union has 6,130 vectors, so it exceeds the 5,000-vector
+exact threshold and enters graph search.
 
-The closest candidate is expanded first; termination occurs when it is farther
-than the worst retained beam element. Disjoint components receive independent
-beams before deduplication.
+1. The gateway directory identifies at most 16 in-range candidates; the four
+   closest valid gateways seed each component's beam.
+2. Expanding gateway `v₂₈₈₀₀` follows a 168-hour range edge to `v₂₉₀₄₄` and
+   semantic links within **P₁**. Gateway `v₃₅₈₄₀` reaches `v₃₆₁₀₄` in **P₂**.
+3. An edge to `v₂₇₉₉₀` fails the local-ID test and is rejected **before** its
+   vector row is read. Valid candidates update the `efSearch=256` beam.
+4. When the next candidate is farther than the worst retained beam element,
+   traversal stops. Exact reranking of visited eligible candidates returns
+   `(v₃₆₁₀₄, 0.08)`, `(v₂₉₀₄₄, 0.11)`, and `(v₃₅₄₁₂, 0.14)`.
 
-**Design decisions:** (1) chronological IDs make time ranges searchable by
-binary search; (2) construction-only FAISS supplies mature semantic candidates;
-(3) protected temporal links preserve interval connectivity; (4) independent
-scale/direction budgets prevent edge-class eviction; and (5) exact fallback
-avoids approximation when at most 5,000 vectors are eligible.
+This illustrative run misses `(v₃₁₉₈₀, 0.06)` because no explored path reaches
+its temporal region; that is approximation, not a filter error. Disjoint
+components use independent beams before global deduplication and reranking.
 
-The topology improves filtered edge survival but not exact recall. Very late
-records require rebuild, repair, or a delta index to preserve chronological IDs.
+**Rationale:** chronological IDs enable binary-search filtering; construction
+FAISS supplies semantic candidates; protected links preserve connectivity;
+separate budgets prevent edge-class eviction; and exact fallback removes small-
+range approximation. Late records require repair, rebuild, or a delta index.
 
 <div class="page-break"></div>
 
@@ -141,23 +218,17 @@ records require rebuild, repair, or a delta index to preserve chronological IDs.
 <w:p><w:r><w:br w:type="page"/></w:r></w:p>
 ```
 
-# 3. Coverage-bounded range-aware RT-HNSW
+# 4. Coverage-bounded range-aware RT-HNSW
 
-## 3.1 Purpose and metadata
+## 4.1 Purpose and metadata
 
-Range-aware edges improve the chance of navigating inside a filter, but the
-single global beam can still concentrate on a few semantically attractive time
-regions. The coverage-bounded variant leaves the graph unchanged and adds a
-routing overlay that requires every intersecting region to participate.
+A global beam can concentrate on a few attractive time regions. Coverage leaves
+the graph unchanged but requires every intersecting region to participate.
+Chronological IDs form 512-vector blocks; each stores ID offsets, conservative
+time bounds, and four sampled representatives: first, last, centroid-nearest,
+and farthest-point. The 100k overlay is approximately 8 KB.
 
-Chronological IDs form 512-vector blocks (about 196 blocks at 100,000 vectors).
-Each block stores ID offsets, conservative timestamp bounds, and four
-representatives selected from up to 64 samples: first, last, centroid-nearest,
-and farthest-point vectors. The overlay is approximately 8 KB. Bounds describe
-a precise block; transitive metadata would expand toward the whole cyclic graph
-and provide little pruning value.
-
-## 3.2 Coverage invariant
+## 4.2 Coverage invariant
 
 For query component **Q**, let **B_Q** contain every block whose conservative
 interval intersects **Q**. A block is removed only when its maximum timestamp is
@@ -170,7 +241,7 @@ Here, **e** is the configured block-local expansion count. This guarantees
 **temporal block coverage**, not examination of every vector and not exact
 nearest-neighbor recall.
 
-## 3.3 Two-stage search procedure
+## 4.3 Two-stage search procedure
 
 **Coverage stage.** For every intersecting block, discard out-of-component
 representatives, add strict boundaries for a partial block, score up to **g**
@@ -180,40 +251,40 @@ neighbors are rejected; cross-block edges are deferred.
 **ANN stage.** Merge local frontiers into one candidate heap, then resume normal
 strict range-aware search with the configured `efSearch` capacity.
 
-```text
-component → intersecting blocks → representative scoring
-          → mandatory local expansions → merged global frontier
-          → strict range-aware beam → exact rerank
-```
-
-The mandatory queue cannot be stopped by the ordinary HNSW termination rule.
-For **R** intersecting blocks, **g** representatives, graph degree **M**,
-mandatory effort **e**, vector dimension **d**, and **E** later ANN expansions,
-a practical cost model is:
+The mandatory queue ignores ordinary HNSW termination. For **R** blocks, **g**
+representatives, degree **M**, mandatory effort **e**, dimension **d**, and
+**E** later ANN expansions, work is:
 
 > **Query work = O(R·g·d + R·e·M·d + E·M·d).**
 
-This explains the principal trade-off: coverage is deterministic, but its cost
-grows with temporal width and database size. The experiment therefore evaluates
-both same-`efSearch` quality and quality at matched distance computations.
+Coverage is deterministic, but cost grows with temporal width; therefore it is
+also tested at matched distance computations.
 
-## 3.4 Working example and design decisions
+## 4.4 Working query example and design decisions
 
-If a query overlaps **B₃–B₇**, all five blocks score valid representatives and
-expand one seed. Only after merging those five frontiers may the global beam
-concentrate on the most promising region.
+Apply coverage scheduling to the same **q**, `k=3`, and ID components
+`[28,700, 32,350)` and `[35,120, 37,600)`. With 512-vector blocks, they
+intersect blocks **B₅₆–B₆₃** and **B₆₈–B₇₃**.
 
-| Design decision | Rationale |
-|---|---|
-| Sidecar overlay, unchanged graph | Isolate the effect of scheduling from topology changes |
-| Fixed-population blocks | Bound metadata per block despite bursty tweet density |
-| Conservative min/max bounds | Permit extra work but never false-negative pruning |
-| Boundary plus diverse representatives | Represent temporal extremes and different semantic regions |
-| Separate mandatory and ANN queues | Prevent ordinary beam termination from skipping a block |
-| Strict in-range expansion | Preserve the project's no-out-of-range-scoring guarantee |
+1. Conservative min/max tests retain all 14 intersecting blocks. Boundary
+   representatives outside the two components are discarded.
+2. Up to four valid representatives per block are scored. The nearest seed in
+   every block receives at least one local expansion; cross-block edges are
+   deferred during this mandatory phase.
+3. Expansion in **B₆₂** discovers `v₃₁₉₈₀`, the candidate that the ordinary
+   global beam missed. Only after every retained block records one expansion are
+   all local frontiers merged.
+4. The normal strict beam resumes and exact reranking returns
+   `(v₃₁₉₈₀, 0.06)`, `(v₃₆₁₀₄, 0.08)`, and `(v₂₉₀₄₄, 0.11)`.
 
-Coverage is a regional-participation contract, not exhaustive search; it is an
-optional policy rather than a replacement for the flat graph.
+The example explains the mechanism, not a promise of improvement: coverage
+ensures regional participation, while neighbors remain approximate.
+
+**Rationale.** The sidecar isolates scheduling from topology. Fixed-population
+blocks bound metadata; conservative bounds cannot prune an eligible block.
+Diverse representatives and separate queues prevent premature regional loss,
+and strict expansion preserves the no-out-of-range-scoring rule. Coverage is
+not exhaustive search.
 
 <div class="page-break"></div>
 
@@ -221,9 +292,9 @@ optional policy rather than a replacement for the flat graph.
 <w:p><w:r><w:br w:type="page"/></w:r></w:p>
 ```
 
-# 4. Experimental results and comparative interpretation
+# 5. Experimental results and comparative interpretation
 
-## 4.1 Evaluation panels
+## 5.1 Evaluation panels
 
 Bucket HNSW and RT-HNSW were evaluated on different panels; their absolute
 latencies are not directly comparable.
@@ -237,7 +308,7 @@ latencies are not directly comparable.
 | Predicate components | 1–4 | 1, 2, 4 |
 | Ground truth | Exact eligible L2 | Exact eligible L2 |
 
-## 4.2 Principal metrics
+## 5.2 Principal metrics
 
 **Bucket HNSW:** 0.99908 Recall@100, 144.18 ms mean latency, 566.15 ms p95,
 35,811 mean distance computations, and 1.790 GB HNSW storage. Narrow one-hour
@@ -258,7 +329,7 @@ At ef256, recall is 0.8699 for 168-hour and 0.8873 for 720-hour queries. Narrow
 queries generally use exact fallback and achieve recall 1.0. Custom graph
 storage is approximately 15.6 MB excluding vectors.
 
-## 4.3 Controlled flat-versus-coverage result
+## 5.3 Controlled flat-versus-coverage result
 
 | Metric at ef256 | Flat | Coverage-bounded | Change |
 |---|---:|---:|---:|
@@ -278,7 +349,7 @@ top-100 neighbor. Coverage improved all three, but across all 900 queries only
 75 improved, 801 tied, and 24 regressed. The dominant residual error is
 within-region navigation, not failure to enter a temporal region.
 
-## 4.4 Comparative conclusion
+## 5.4 Comparative conclusion
 
 Bucket HNSW is the near-exact, high-cost design. Flat RT-HNSW is the strongest
 single-graph quality-cost compromise. Coverage-bounded RT-HNSW provides a valid
@@ -291,9 +362,9 @@ default query policy.
 <w:p><w:r><w:br w:type="page"/></w:r></w:p>
 ```
 
-# 5. Streaming implementation and final recommendation
+# 6. Streaming implementation and final recommendation
 
-## 5.1 Ordered Kafka update architecture
+## 6.1 Ordered Kafka update architecture
 
 Parallel Kafka partitions preserve arrival order only within each partition;
 they do not preserve global event-time order. RT-HNSW therefore uses an
@@ -315,7 +386,7 @@ when a global watermark proves the order safe. It assigns contiguous
 `index_sequence` values. Events behind the committed watermark are routed to a
 late topic rather than silently inserted out of order.
 
-## 5.2 Durable publication sequence
+## 6.2 Durable publication sequence
 
 For every micro-batch, the writer:
 
@@ -332,7 +403,7 @@ idempotent. Query processes pin one immutable generation for the full request:
 existing queries finish on generation **N**, while new queries switch to
 **N + 1**.
 
-## 5.3 Final decision sequence
+## 6.3 Final decision sequence
 
 ```text
 eligible population ≤ 5,000
@@ -352,7 +423,7 @@ The default third design should remain flat RT-HNSW with 20 semantic edges,
 protected predecessor/successor links, two left/right edges at each temporal
 scale, exact threshold 5,000, and initial `efSearch=256`.
 
-## 5.4 Novelty and limitations
+## 6.4 Novelty and limitations
 
 The project contribution combines protected chronology, independent
 multi-scale budgets, strict pre-distance filtering, exact fallback, a tested
