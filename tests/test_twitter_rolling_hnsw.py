@@ -135,13 +135,18 @@ class TwitterRollingHNSWTests(unittest.TestCase):
                         hierarchy_semantic_degree=2,
                         hierarchy_level_probability=0.9,
                         hierarchy_max_level=2,
-                        hierarchy_construction_candidates=4),
+                        hierarchy_construction_candidates=4,
+                        hierarchy_range_degree_per_side=1,
+                        hierarchy_range_candidate_count=4,
+                        hierarchy_range_scales_hours="1,2"),
                 progress_every=0,
             )
             index = RollingTemporalHNSW(root, self.vectors)
             self.assertGreater(int(np.max(index.levels)), 0)
             self.assertTrue(np.any(index.upper_semantic_neighbors >= 0))
             self.assertTrue(np.any(index.upper_temporal_neighbors >= 0))
+            self.assertTrue(np.any(index.upper_range_left_neighbors >= 0))
+            self.assertTrue(np.any(index.upper_range_right_neighbors >= 0))
             result = index.search(
                 np.array([4.0, 0.0], dtype=np.float32), [[1000, 7000]],
                 RollingSearchConfig(k=2, ef_search=4, exact_threshold=0,
@@ -151,6 +156,7 @@ class TwitterRollingHNSWTests(unittest.TestCase):
             self.assertIn("strict_hierarchy", result["method"])
             self.assertGreater(result["upper_entry_level"], 0)
             self.assertGreater(result["upper_nodes_visited"], 0)
+            self.assertGreater(result["upper_range_edges_examined"], 0)
 
     def test_disjoint_intervals_merge_exact_components(self):
         with tempfile.TemporaryDirectory() as directory:

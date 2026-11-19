@@ -237,9 +237,24 @@ benchmark-twitter-rt-hnsw \
   --output results/twitter_rt_hnsw_100k/hierarchy_ef512
 ```
 
+The fixed-storage upper range-aware experiment replaces the upper semantic-8
+budget with four semantic and two left/right range-aware edges. Levels map to
+24, 168 and 720-hour temporal scales:
+
+```bash
+build-twitter-rt-hnsw \
+  --output Twitter_data/ann/rolling_hnsw/hierarchical_100k_upper_range \
+  --semantic-degree 20 --range-degree-per-side 2 \
+  --range-scales-hours 24,168,720 --hierarchy \
+  --hierarchy-semantic-degree 4 \
+  --hierarchy-range-degree-per-side 2 \
+  --hierarchy-range-scales-hours 24,168,720
+```
+
 The default workload output is `results/twitter_rt_hnsw_100k/`. This remains a
 research prototype, not a production FAISS HNSW replacement: it has no adaptive
-gateways, late-arrival repair, expiration, or concurrent update support.
+gateways, late-arrival repair, expiration, or concurrent update support. The
+gated adaptive gateway plan is documented in `docs/ADAPTIVE_GATEWAY_PLAN.md`.
 
 ## Test
 

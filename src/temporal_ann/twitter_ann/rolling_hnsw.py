@@ -36,6 +36,9 @@ class RollingBuildConfig:
     hierarchy_max_level: int = 6
     hierarchy_seed: int = 23
     hierarchy_construction_candidates: int = 32
+    hierarchy_range_degree_per_side: int = 0
+    hierarchy_range_candidate_count: int = 32
+    hierarchy_range_scales_hours: str = ""
 
     def range_scales(self) -> tuple[int, ...]:
         if self.range_degree_per_side == 0:
@@ -51,6 +54,20 @@ class RollingBuildConfig:
             return scales
         return (self.range_window_hours,)
 
+    def hierarchy_range_scales(self) -> tuple[int, ...]:
+        if self.hierarchy_range_degree_per_side == 0:
+            return ()
+        value = self.hierarchy_range_scales_hours.strip()
+        if value:
+            scales = tuple(sorted({
+                int(item.strip()) for item in value.split(",") if item.strip()
+            }))
+        else:
+            scales = self.range_scales()
+        if not scales or any(scale <= 0 for scale in scales):
+            raise ValueError("hierarchy range scales must be positive hours")
+        return scales
+
     def validate(self) -> None:
         values = (
             self.vector_count, self.semantic_degree, self.gateway_degree,
@@ -59,14 +76,17 @@ class RollingBuildConfig:
             self.range_candidate_count, self.range_window_hours,
             self.hierarchy_semantic_degree, self.hierarchy_max_level,
             self.hierarchy_construction_candidates,
+            self.hierarchy_range_candidate_count,
         )
-        if any(value <= 0 for value in values) or self.range_degree_per_side < 0:
+        if (any(value <= 0 for value in values) or self.range_degree_per_side < 0
+                or self.hierarchy_range_degree_per_side < 0):
             raise ValueError("rolling-HNSW parameters are invalid")
         if not 0.0 < self.hierarchy_level_probability < 1.0:
             raise ValueError("hierarchy_level_probability must be in (0,1)")
         if self.construction_candidates < self.semantic_degree:
             raise ValueError("construction_candidates must be at least semantic_degree")
         self.range_scales()
+        self.hierarchy_range_scales()
 
 
 @dataclass(frozen=True)
@@ -200,7 +220,27 @@ def build_rolling_index(
     upper_semantic_neighbors = np.full(upper_shape, -1, dtype=np.int32)
     upper_semantic_distances = np.full(upper_shape, np.inf, dtype=np.float32)
     upper_temporal_neighbors = np.full(upper_temporal_shape, -1, dtype=np.int32)
+    hierarchy_range_scales = config.hierarchy_range_scales()
+    if config.hierarchy_enabled and hierarchy_range_scales:
+        upper_range_shape = (
+            count, config.hierarchy_max_level,
+            config.hierarchy_range_degree_per_side,
+        )
+        level_range_scales = tuple(
+            hierarchy_range_scales[min(level, len(hierarchy_range_scales) - 1)]
+            for level in range(config.hierarchy_max_level)
+        )
+    else:
+        upper_range_shape = (count, 0, 0)
+        level_range_scales = ()
+    upper_range_left_neighbors = np.full(upper_range_shape, -1, dtype=np.int32)
+    upper_range_right_neighbors = np.full(upper_range_shape, -1, dtype=np.int32)
+    upper_range_left_scores = np.full(upper_range_shape, np.inf, dtype=np.float32)
+    upper_range_right_scores = np.full(upper_range_shape, np.inf, dtype=np.float32)
     last_at_level = np.full(config.hierarchy_max_level, -1, dtype=np.int32)
+    level_inserted_ids: list[list[int]] = [
+        [] for _ in range(config.hierarchy_max_level)
+    ]
 
     gateway_rows = np.full(count, -1, dtype=np.int32)
     max_gateways = count // config.gateway_period
@@ -317,6 +357,7 @@ def build_rolling_index(
                 for level in range(1, int(levels[local_id]) + 1):
                     level_index = level - 1
                     base, id_map = upper_indexes[level_index]
+                    upper_candidate_ids = np.empty(0, dtype=np.int64)
                     if id_map.ntotal:
                         base.hnsw.efSearch = max(
                             config.ef_construction,
@@ -327,10 +368,14 @@ def build_rolling_index(
                         )
                         upper_distances, upper_ids = id_map.search(vector, fetch)
                         valid_upper = upper_ids[0] >= 0
-                        selected_ids = upper_ids[0][valid_upper][
+                        upper_candidate_ids = np.asarray(
+                            upper_ids[0][valid_upper], dtype=np.int64
+                        )
+                        upper_candidate_distances = upper_distances[0][valid_upper]
+                        selected_ids = upper_candidate_ids[
                             :config.hierarchy_semantic_degree
                         ]
-                        selected_distances = upper_distances[0][valid_upper][
+                        selected_distances = upper_candidate_distances[
                             :config.hierarchy_semantic_degree
                         ]
                         level_neighbors = upper_semantic_neighbors[:, level_index, :]
@@ -346,11 +391,93 @@ def build_rolling_index(
                                 level_neighbors, level_distances,
                                 neighbor_id, local_id, value,
                             )
+
+                    if hierarchy_range_scales and level_inserted_ids[level_index]:
+                        scale_hours = level_range_scales[level_index]
+                        window_ms = scale_hours * 3_600_000
+                        current_timestamp = int(ordered_timestamps[local_id])
+                        prior_ids = np.asarray(
+                            level_inserted_ids[level_index], dtype=np.int64
+                        )
+                        prior_timestamps = ordered_timestamps[prior_ids]
+                        first_recent = int(np.searchsorted(
+                            prior_timestamps, current_timestamp - window_ms,
+                            side="left",
+                        ))
+                        recent_population = len(prior_ids) - first_recent
+                        recent_count = min(
+                            config.hierarchy_range_candidate_count,
+                            recent_population,
+                        )
+                        if recent_count:
+                            positions = np.unique(np.linspace(
+                                first_recent, len(prior_ids) - 1,
+                                recent_count, dtype=np.int64,
+                            ))
+                            recent = prior_ids[positions]
+                        else:
+                            recent = np.empty(0, dtype=np.int64)
+                        immediate = prior_ids[max(first_recent, len(prior_ids) - 8):]
+                        pool = np.unique(np.concatenate((
+                            upper_candidate_ids, recent, immediate,
+                        )))
+                        if len(pool):
+                            pool_global_ids = global_ids[pool]
+                            difference = np.asarray(
+                                vectors[pool_global_ids], dtype=np.float32
+                            ) - vector[0]
+                            distances = np.einsum(
+                                "ij,ij->i", difference, difference
+                            )
+                            gaps = current_timestamp - ordered_timestamps[pool]
+                            coeligibility = np.maximum(
+                                0.0, 1.0 - gaps / window_ms
+                            )
+                            valid_range = coeligibility > 0.0
+                            pool = pool[valid_range]
+                            distances = distances[valid_range]
+                            coeligibility = coeligibility[valid_range]
+                            scores = distances / (coeligibility + 1e-6)
+                            selected_count = min(
+                                config.hierarchy_range_degree_per_side, len(pool)
+                            )
+                            if selected_count:
+                                selected = np.argpartition(
+                                    scores, selected_count - 1
+                                )[:selected_count]
+                                selected = selected[
+                                    np.argsort(scores[selected], kind="stable")
+                                ]
+                                left_neighbors = upper_range_left_neighbors[
+                                    :, level_index, :
+                                ]
+                                right_neighbors = upper_range_right_neighbors[
+                                    :, level_index, :
+                                ]
+                                left_scores = upper_range_left_scores[
+                                    :, level_index, :
+                                ]
+                                right_scores = upper_range_right_scores[
+                                    :, level_index, :
+                                ]
+                                for position in selected:
+                                    neighbor_id = int(pool[position])
+                                    score = float(scores[position])
+                                    _add_bounded_edge(
+                                        left_neighbors, left_scores,
+                                        local_id, neighbor_id, score,
+                                    )
+                                    _add_bounded_edge(
+                                        right_neighbors, right_scores,
+                                        neighbor_id, local_id, score,
+                                    )
+
                     previous = int(last_at_level[level_index])
                     if previous >= 0:
                         upper_temporal_neighbors[local_id, level_index, 0] = previous
                         upper_temporal_neighbors[previous, level_index, 1] = local_id
                     last_at_level[level_index] = local_id
+                    level_inserted_ids[level_index].append(local_id)
                     id_map.add_with_ids(
                         vector, np.asarray([local_id], dtype=np.int64)
                     )
@@ -402,6 +529,8 @@ def build_rolling_index(
             "levels": "levels.npy",
             "upper_semantic_neighbors": "upper_semantic_neighbors.npy",
             "upper_temporal_neighbors": "upper_temporal_neighbors.npy",
+            "upper_range_left_neighbors": "upper_range_left_neighbors.npy",
+            "upper_range_right_neighbors": "upper_range_right_neighbors.npy",
             "gateway_ids": "gateway_ids.npy",
             "gateway_rows": "gateway_rows.npy",
             "gateway_neighbors": "gateway_neighbors.npy",
@@ -416,6 +545,8 @@ def build_rolling_index(
             "levels": levels,
             "upper_semantic_neighbors": upper_semantic_neighbors,
             "upper_temporal_neighbors": upper_temporal_neighbors,
+            "upper_range_left_neighbors": upper_range_left_neighbors,
+            "upper_range_right_neighbors": upper_range_right_neighbors,
             "gateway_ids": gateway_ids[:gateway_count],
             "gateway_rows": gateway_rows,
             "gateway_neighbors": gateway_neighbors[:gateway_count],
@@ -444,6 +575,10 @@ def build_rolling_index(
             "hierarchy_level_counts": {
                 str(level): int(np.sum(levels >= level))
                 for level in range(1, config.hierarchy_max_level + 1)
+            },
+            "hierarchy_range_scale_by_level": {
+                str(level + 1): int(scale)
+                for level, scale in enumerate(level_range_scales)
             },
             "files": files,
         }
@@ -496,6 +631,22 @@ class RollingTemporalHNSW:
             self.upper_temporal_neighbors = np.load(
                 self.directory / files["upper_temporal_neighbors"], mmap_mode="r"
             )
+            if "upper_range_left_neighbors" in files:
+                self.upper_range_left_neighbors = np.load(
+                    self.directory / files["upper_range_left_neighbors"],
+                    mmap_mode="r",
+                )
+                self.upper_range_right_neighbors = np.load(
+                    self.directory / files["upper_range_right_neighbors"],
+                    mmap_mode="r",
+                )
+            else:
+                self.upper_range_left_neighbors = np.empty(
+                    (len(self.global_ids), 0, 0), dtype=np.int32
+                )
+                self.upper_range_right_neighbors = np.empty(
+                    (len(self.global_ids), 0, 0), dtype=np.int32
+                )
         else:
             self.levels = np.zeros(len(self.global_ids), dtype=np.int8)
             self.upper_semantic_neighbors = np.empty(
@@ -503,6 +654,12 @@ class RollingTemporalHNSW:
             )
             self.upper_temporal_neighbors = np.empty(
                 (len(self.global_ids), 0, 2), dtype=np.int32
+            )
+            self.upper_range_left_neighbors = np.empty(
+                (len(self.global_ids), 0, 0), dtype=np.int32
+            )
+            self.upper_range_right_neighbors = np.empty(
+                (len(self.global_ids), 0, 0), dtype=np.int32
             )
         self.level_ids = {
             level: np.flatnonzero(self.levels >= level).astype(np.int32)
@@ -573,6 +730,7 @@ class RollingTemporalHNSW:
             "upper_entry_level": 0,
             "upper_nodes_visited": 0,
             "upper_semantic_edges_examined": 0,
+            "upper_range_edges_examined": 0,
             "upper_temporal_edges_examined": 0,
             "upper_out_of_range_edges_rejected": 0,
             "upper_distance_computations": 0,
@@ -627,10 +785,17 @@ class RollingTemporalHNSW:
                 if (len(best) >= config.upper_ef_search and
                         current_distance > -best[0][0]):
                     break
-                edge_groups = (
+                edge_groups: list[tuple[str, np.ndarray]] = []
+                if (config.use_range_edges and
+                        self.upper_range_left_neighbors.shape[1] >= level):
+                    edge_groups.extend((
+                        ("range", self.upper_range_left_neighbors[current, level - 1]),
+                        ("range", self.upper_range_right_neighbors[current, level - 1]),
+                    ))
+                edge_groups.extend((
                     ("semantic", self.upper_semantic_neighbors[current, level - 1]),
                     ("temporal", self.upper_temporal_neighbors[current, level - 1]),
-                )
+                ))
                 for edge_type, neighbors in edge_groups:
                     for value in neighbors:
                         neighbor = int(value)
@@ -638,6 +803,8 @@ class RollingTemporalHNSW:
                             continue
                         if edge_type == "semantic":
                             diagnostics["upper_semantic_edges_examined"] += 1
+                        elif edge_type == "range":
+                            diagnostics["upper_range_edges_examined"] += 1
                         else:
                             diagnostics["upper_temporal_edges_examined"] += 1
                         if neighbor < local_left or neighbor >= local_right:
@@ -812,6 +979,7 @@ class RollingTemporalHNSW:
             "out_of_range_edges_rejected": 0,
             "upper_entry_level": 0, "upper_nodes_visited": 0,
             "upper_semantic_edges_examined": 0,
+            "upper_range_edges_examined": 0,
             "upper_temporal_edges_examined": 0,
             "upper_out_of_range_edges_rejected": 0,
             "upper_distance_computations": 0,
@@ -902,6 +1070,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--hierarchy-max-level", type=int, default=6)
     parser.add_argument("--hierarchy-seed", type=int, default=23)
     parser.add_argument("--hierarchy-construction-candidates", type=int, default=32)
+    parser.add_argument("--hierarchy-range-degree-per-side", type=int, default=0)
+    parser.add_argument("--hierarchy-range-candidate-count", type=int, default=32)
+    parser.add_argument("--hierarchy-range-scales-hours", default="")
     parser.add_argument("--progress-every", type=int, default=5_000)
     parser.add_argument("--rebuild", action="store_true")
     return parser
@@ -930,6 +1101,9 @@ def build_main() -> None:
         hierarchy_max_level=args.hierarchy_max_level,
         hierarchy_seed=args.hierarchy_seed,
         hierarchy_construction_candidates=args.hierarchy_construction_candidates,
+        hierarchy_range_degree_per_side=args.hierarchy_range_degree_per_side,
+        hierarchy_range_candidate_count=args.hierarchy_range_candidate_count,
+        hierarchy_range_scales_hours=args.hierarchy_range_scales_hours,
     )
     manifest = build_rolling_index(
         vectors, timestamps, args.output, config,

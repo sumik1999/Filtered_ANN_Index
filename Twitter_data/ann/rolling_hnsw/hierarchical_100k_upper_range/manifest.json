@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "backend": "hierarchical rolling temporal HNSW prototype",
+  "candidate_generator": "FAISS IndexHNSWFlat (construction only)",
+  "metric": "squared L2",
+  "vector_count": 100000,
+  "dimensions": 384,
+  "dtype": "float32",
+  "ordered_arrival": true,
+  "timestamp_order_key": "(timestamp_ms, stable source vector_id order)",
+  "config": {
+    "vector_count": 100000,
+    "semantic_degree": 20,
+    "gateway_degree": 8,
+    "gateway_period": 512,
+    "construction_candidates": 64,
+    "ef_construction": 200,
+    "candidate_index_m": 32,
+    "threads": 4,
+    "range_degree_per_side": 2,
+    "range_candidate_count": 64,
+    "range_window_hours": 720,
+    "range_scales_hours": "24,168,720",
+    "hierarchy_enabled": true,
+    "hierarchy_semantic_degree": 4,
+    "hierarchy_level_probability": 0.05,
+    "hierarchy_max_level": 6,
+    "hierarchy_seed": 23,
+    "hierarchy_construction_candidates": 32,
+    "hierarchy_range_degree_per_side": 2,
+    "hierarchy_range_candidate_count": 32,
+    "hierarchy_range_scales_hours": "24,168,720"
+  },
+  "source": {
+    "embeddings": "Twitter_data/processed/database_vectors.npy",
+    "timestamps": "Twitter_data/ann/timestamps_ms.npy"
+  },
+  "construction_seconds": 148.07828341700952,
+  "gateway_count": 195,
+  "range_scales_hours": [
+    24,
+    168,
+    720
+  ],
+  "hierarchy_level_counts": {
+    "1": 4880,
+    "2": 245,
+    "3": 12,
+    "4": 0,
+    "5": 0,
+    "6": 0
+  },
+  "hierarchy_range_scale_by_level": {
+    "1": 24,
+    "2": 168,
+    "3": 720,
+    "4": 720,
+    "5": 720,
+    "6": 720
+  },
+  "files": {
+    "global_ids": "global_ids.npy",
+    "timestamps": "timestamps.npy",
+    "semantic_neighbors": "semantic_neighbors.npy",
+    "temporal_neighbors": "temporal_neighbors.npy",
+    "range_left_neighbors": "range_left_neighbors.npy",
+    "range_right_neighbors": "range_right_neighbors.npy",
+    "levels": "levels.npy",
+    "upper_semantic_neighbors": "upper_semantic_neighbors.npy",
+    "upper_temporal_neighbors": "upper_temporal_neighbors.npy",
+    "upper_range_left_neighbors": "upper_range_left_neighbors.npy",
+    "upper_range_right_neighbors": "upper_range_right_neighbors.npy",
+    "gateway_ids": "gateway_ids.npy",
+    "gateway_rows": "gateway_rows.npy",
+    "gateway_neighbors": "gateway_neighbors.npy"
+  },
+  "artifact_size_bytes": 39708812
+}

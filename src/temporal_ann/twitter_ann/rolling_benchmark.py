@@ -201,6 +201,7 @@ def _aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "mean_upper_nodes_visited": float(np.mean([row["upper_nodes_visited"] for row in rows])),
         "mean_upper_distance_computations": float(np.mean([row["upper_distance_computations"] for row in rows])),
         "mean_upper_semantic_edges_examined": float(np.mean([row["upper_semantic_edges_examined"] for row in rows])),
+        "mean_upper_range_edges_examined": float(np.mean([row["upper_range_edges_examined"] for row in rows])),
         "mean_upper_temporal_edges_examined": float(np.mean([row["upper_temporal_edges_examined"] for row in rows])),
         "mean_eligible_count": float(np.mean([row["eligible_count"] for row in rows])),
     }
@@ -218,6 +219,7 @@ def benchmark(
     gateway_candidates: int = 16,
     gateway_seeds: int = 4,
     upper_ef_search: int = 32,
+    variant_names: list[str] | None = None,
     progress_every: int = 100,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     variants = {
@@ -229,6 +231,11 @@ def benchmark(
     }
     if index.config.hierarchy_enabled:
         variants["hierarchical_multiscale"] = (True, False, True, True)
+    if variant_names:
+        unknown = set(variant_names) - set(variants)
+        if unknown:
+            raise ValueError(f"unknown variants: {sorted(unknown)}")
+        variants = {name: variants[name] for name in variant_names}
     rows: list[dict[str, Any]] = []
     for variant, (use_temporal, use_gateway, use_range, use_hierarchy) in variants.items():
         config = RollingSearchConfig(
@@ -279,6 +286,7 @@ def benchmark(
                 "upper_nodes_visited": result["upper_nodes_visited"],
                 "upper_distance_computations": result["upper_distance_computations"],
                 "upper_semantic_edges_examined": result["upper_semantic_edges_examined"],
+                "upper_range_edges_examined": result["upper_range_edges_examined"],
                 "upper_temporal_edges_examined": result["upper_temporal_edges_examined"],
                 "upper_out_of_range_edges_rejected": result["upper_out_of_range_edges_rejected"],
                 "routing_ms": result["routing_ms"],
@@ -357,6 +365,7 @@ def benchmark_parser() -> argparse.ArgumentParser:
     parser.add_argument("--gateway-candidates", type=int, default=16)
     parser.add_argument("--gateway-seeds", type=int, default=4)
     parser.add_argument("--upper-ef-search", type=int, default=32)
+    parser.add_argument("--variants", default="")
     parser.add_argument("--progress-every", type=int, default=100)
     return parser
 
@@ -392,6 +401,7 @@ def benchmark_main() -> None:
         gateway_candidates=args.gateway_candidates,
         gateway_seeds=args.gateway_seeds,
         upper_ef_search=args.upper_ef_search,
+        variant_names=[value.strip() for value in args.variants.split(",") if value.strip()],
         progress_every=args.progress_every,
     )
     print(json.dumps(summary["overall"], indent=2))
