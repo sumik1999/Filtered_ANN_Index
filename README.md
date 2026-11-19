@@ -23,6 +23,11 @@ pip install -e .
 
 The project description remains in `requirements.txt` as requested. Python package dependencies are declared in `pyproject.toml`.
 
+For a complete clean-room reproduction of the Twitter dataset, density-64
+bucket experiment, flat and coverage-bounded RT-HNSW experiments, equal-budget
+sweeps, validation checks, and optional Kafka pipeline, see
+[`REPRODUCIBILITY.md`](REPRODUCIBILITY.md).
+
 ## Run
 
 A quick smoke benchmark:
