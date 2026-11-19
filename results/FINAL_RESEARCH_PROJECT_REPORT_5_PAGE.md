@@ -73,14 +73,11 @@ resulting local IDs satisfy the ordering invariant:
 Therefore, binary search converts every half-open time interval into a contiguous
 local-ID range.
 
-For insertion **vᵢ**, a temporary FAISS HNSW searches only the already inserted
-vectors and returns up to 64 semantic candidates. The closest candidates form a
-bounded reciprocal semantic list. Separately, **vᵢ** is linked to **vᵢ₋₁**, and
-the predecessor receives a successor link. These two temporal links are
-protected from semantic replacement; therefore, any contiguous time interval
-retains an internal chronological path. Every 512th vector is also recorded as
-a gateway for query entry selection. FAISS is a construction aid only: queries
-traverse the persisted RT-HNSW adjacency.
+During insertion, a temporary FAISS HNSW searches only prior vectors and
+returns up to 64 semantic candidates. Bounded reciprocal lists retain the
+closest candidates. The new vector and its predecessor receive protected
+backbone links, and every 512th vector becomes a query gateway. FAISS is used
+only for construction; queries traverse the persisted custom adjacency.
 
 ## 2.2 Range-aware multi-scale topology
 
@@ -96,49 +93,47 @@ reallocates the nominal degree budget as follows:
 | 720-hour left/right | 2 + 2 | Broad-range compatibility |
 | Protected predecessor/successor | Separate | Guaranteed temporal backbone |
 
-For temporal scale **W** and newly inserted vector **vᵢ**, candidates combine
-semantic proposals, up to 64 evenly sampled prior vectors inside **W**, and the
-16 immediate predecessors. A candidate **u** is scored using:
+At scale **W**, candidates combine semantic proposals, up to 64 evenly sampled
+prior vectors inside **W**, and 16 immediate predecessors. They are ranked by:
 
 > **score(u, vᵢ) = d(u, vᵢ) ÷ [max(0, 1 − (tᵢ − tᵤ) ÷ W) + ε].**
 
-The best two candidates receive left edges from **vᵢ**; bounded reciprocal right
-edges are added to the older nodes. Left and right arrays are independent, and
-each temporal scale has its own budget. Thus, a 720-hour edge cannot evict a
-24-hour edge, and future reciprocal insertions cannot consume the current
-node's left-side allocation.
+The best two become left edges from **vᵢ** and reciprocal right edges on older
+nodes. Separate scale and direction arrays prevent broad or future links from
+evicting short-range historical links.
 
 ## 2.3 Strict query traversal
 
-For each normalized predicate component, timestamp binary search yields
-`[local_left, local_right)`. If the eligible population is at most 5,000, the
-system performs exact pre-filtered search. Otherwise it samples at most 16
-in-range gateways, computes their query distances, and retains the closest four
-as entry seeds.
-
-Search maintains a minimum candidate heap and a maximum result heap of size
-`efSearch`. When expanding a node, semantic, temporal, and enabled multi-scale
-neighbors are examined. The local-ID boundary test occurs before vector access:
+Binary search maps each normalized predicate component to
+`[local_left, local_right)`. Up to 5,000 eligible vectors use exact search;
+otherwise, the closest four of at most 16 in-range gateways seed a minimum
+candidate heap and a maximum result heap of size `efSearch`. Every semantic,
+temporal, or range destination first passes the local-ID boundary test:
 
 ```text
 if neighbor < local_left or neighbor >= local_right: reject
 else if unseen: compute distance and update the beam
 ```
 
-Traversal terminates when the closest unexplored candidate is farther than the
-worst retained beam element. Disjoint components are searched independently;
-their candidates are deduplicated and exactly reranked.
+## 2.4 Working sequence and design decisions
 
 ```text
 predicate → local-ID components → exact fallback or gateway seeds
           → strict semantic + temporal + range beam → exact rerank
 ```
 
-The range-aware topology does not guarantee exact ANN recall. Its purpose is to
-increase the probability that useful edges remain valid after strict filtering,
-while the protected chain preserves basic connectivity. Very late records still
-require rebuild, bounded repair, or a delta index because appending them would
-violate chronological local-ID order.
+The closest candidate is expanded first; termination occurs when it is farther
+than the worst retained beam element. Disjoint components receive independent
+beams before deduplication.
+
+**Design decisions:** (1) chronological IDs make time ranges searchable by
+binary search; (2) construction-only FAISS supplies mature semantic candidates;
+(3) protected temporal links preserve interval connectivity; (4) independent
+scale/direction budgets prevent edge-class eviction; and (5) exact fallback
+avoids approximation when at most 5,000 vectors are eligible.
+
+The topology improves filtered edge survival but not exact recall. Very late
+records require rebuild, repair, or a delta index to preserve chronological IDs.
 
 <div class="page-break"></div>
 
@@ -155,17 +150,12 @@ single global beam can still concentrate on a few semantically attractive time
 regions. The coverage-bounded variant leaves the graph unchanged and adds a
 routing overlay that requires every intersecting region to participate.
 
-Chronological IDs are partitioned into fixed-population blocks of 512 vectors
-(approximately 196 blocks at 100,000 vectors). Each block persists local-ID
-offsets, conservative minimum/maximum timestamps, and four representatives. Up
-to 64 vectors are sampled uniformly inside the block; representatives are the
-first vector, last vector, sampled vector nearest the sample centroid, and a
-farthest-point vector. The complete default overlay is approximately 8 KB,
-excluding array headers.
-
-Metadata describes a precise block rather than transitive HNSW reachability.
-The latter would rapidly expand toward the whole timeline in a cyclic graph and
-would provide little safe pruning value.
+Chronological IDs form 512-vector blocks (about 196 blocks at 100,000 vectors).
+Each block stores ID offsets, conservative timestamp bounds, and four
+representatives selected from up to 64 samples: first, last, centroid-nearest,
+and farthest-point vectors. The overlay is approximately 8 KB. Bounds describe
+a precise block; transitive metadata would expand toward the whole cyclic graph
+and provide little pruning value.
 
 ## 3.2 Coverage invariant
 
@@ -182,16 +172,13 @@ nearest-neighbor recall.
 
 ## 3.3 Two-stage search procedure
 
-**Coverage stage.** For each intersecting block, representatives outside the
-strict component are removed; component boundary IDs are added for a partial
-block. Up to **g** representatives are scored, the closest becomes the seed, and
-a block-local heap performs at least **e** expansions. Neighbors outside the
-query are rejected before distance computation. Cross-block edges are deferred
-rather than consumed by the mandatory local budget.
+**Coverage stage.** For every intersecting block, discard out-of-component
+representatives, add strict boundaries for a partial block, score up to **g**
+representatives, and expand the closest seed at least **e** times. Invalid
+neighbors are rejected; cross-block edges are deferred.
 
-**ANN stage.** All scored local frontiers are merged into the ordinary global
-candidate heap. Strict range-aware RT-HNSW then resumes semantic prioritization
-with its normal `efSearch` result capacity.
+**ANN stage.** Merge local frontiers into one candidate heap, then resume normal
+strict range-aware search with the configured `efSearch` capacity.
 
 ```text
 component → intersecting blocks → representative scoring
@@ -209,6 +196,24 @@ a practical cost model is:
 This explains the principal trade-off: coverage is deterministic, but its cost
 grows with temporal width and database size. The experiment therefore evaluates
 both same-`efSearch` quality and quality at matched distance computations.
+
+## 3.4 Working example and design decisions
+
+If a query overlaps **B₃–B₇**, all five blocks score valid representatives and
+expand one seed. Only after merging those five frontiers may the global beam
+concentrate on the most promising region.
+
+| Design decision | Rationale |
+|---|---|
+| Sidecar overlay, unchanged graph | Isolate the effect of scheduling from topology changes |
+| Fixed-population blocks | Bound metadata per block despite bursty tweet density |
+| Conservative min/max bounds | Permit extra work but never false-negative pruning |
+| Boundary plus diverse representatives | Represent temporal extremes and different semantic regions |
+| Separate mandatory and ANN queues | Prevent ordinary beam termination from skipping a block |
+| Strict in-range expansion | Preserve the project's no-out-of-range-scoring guarantee |
+
+Coverage is a regional-participation contract, not exhaustive search; it is an
+optional policy rather than a replacement for the flat graph.
 
 <div class="page-break"></div>
 
