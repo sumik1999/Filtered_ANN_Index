@@ -266,6 +266,23 @@ gateways, late-arrival repair, expiration, or concurrent update support. The
 gated adaptive gateway plan and failed oracle acceptance result are documented
 in `docs/ADAPTIVE_GATEWAY_PLAN.md`.
 
+### Kafka ordered-ingestion architecture
+
+A local single-broker Kafka environment and explicit topic contracts are under
+`deploy/kafka/` and `schemas/kafka/`:
+
+```bash
+docker compose -f deploy/kafka/docker-compose.yml up -d
+```
+
+The initializer creates parallel raw/embedded topics, a single-partition
+canonical ordered index log, late-event and dead-letter topics, and a compacted
+checkpoint topic. The event-time watermark, single-writer micro-batch commit,
+idempotent crash recovery, immutable query snapshots, and delivery phases are
+designed in `docs/KAFKA_INCREMENTAL_RT_HNSW_ARCHITECTURE.md`. The current index
+builder still requires the incremental writer refactor described there before
+Kafka events can update a live index.
+
 ## Test
 
 ```bash
