@@ -973,6 +973,8 @@ class RollingTemporalHNSW:
         query = np.asarray(query, dtype=np.float32)
         if query.shape != (self.manifest["dimensions"],):
             raise ValueError(f"query must have shape ({self.manifest['dimensions']},)")
+        if not np.all(np.isfinite(query)):
+            raise ValueError("query must contain only finite values")
         if entry_gateway_ids is not None:
             entry_gateway_ids = np.asarray(entry_gateway_ids, dtype=np.int64)
             if (entry_gateway_ids.ndim != 1 or not len(entry_gateway_ids)

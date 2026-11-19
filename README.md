@@ -271,3 +271,9 @@ in `docs/ADAPTIVE_GATEWAY_PLAN.md`.
 ```bash
 python -m unittest discover -s tests
 ```
+
+The RT-HNSW filter suite includes deterministic randomized differential tests,
+half-open boundary and fragmented-query edge cases, exact/graph planner
+boundaries, and vector-row access auditing to prove that strict traversal never
+scores an out-of-range vector. The complete test matrix and nightly/release
+extensions are specified in `docs/RT_HNSW_FILTER_TEST_PLAN.md`.
