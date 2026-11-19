@@ -33,13 +33,11 @@ queries at risk of missing temporal regions.
 
 ## Problem definition
 
-Each database record contains embedding $x_i$, timestamp $t_i$, and stable
-identifier $id_i$. Given query vector $q$, result count $k=100$, and intervals
-$P=\{[a_j,b_j)\}$, the system must return the nearest vectors satisfying
+Each database record contains embedding **xᵢ**, timestamp **tᵢ**, and stable
+identifier **idᵢ**. Given query vector **q**, result count **k = 100**, and
+interval set **P**, the eligibility condition is:
 
-$$
-\exists [a_j,b_j)\in P:\quad a_j\le t_i<b_j.
-$$
+> **Eligible(i) ⇔ there exists [aⱼ, bⱼ) in P such that aⱼ ≤ tᵢ < bⱼ.**
 
 The filter is authoritative and half-open. In RT-HNSW, an invalid destination
 is rejected before its vector is read or its distance is computed.
@@ -68,16 +66,16 @@ is rejected before its vector is read or its distance is computed.
 
 RT-HNSW is one graph over all vectors; temporal buckets are not separate ANN
 indexes. Before construction, source IDs are stably sorted by timestamp. The
-resulting local IDs satisfy
+resulting local IDs satisfy the ordering invariant:
 
-$$t(v_0)\le t(v_1)\le\cdots\le t(v_{N-1}),$$
+> **t(v₀) ≤ t(v₁) ≤ ⋯ ≤ t(v[N−1]).**
 
-so binary search converts every half-open time interval into a contiguous
+Therefore, binary search converts every half-open time interval into a contiguous
 local-ID range.
 
-For insertion $v_i$, a temporary FAISS HNSW searches only the already inserted
+For insertion **vᵢ**, a temporary FAISS HNSW searches only the already inserted
 vectors and returns up to 64 semantic candidates. The closest candidates form a
-bounded reciprocal semantic list. Separately, $v_i$ is linked to $v_{i-1}$ and
+bounded reciprocal semantic list. Separately, **vᵢ** is linked to **vᵢ₋₁**, and
 the predecessor receives a successor link. These two temporal links are
 protected from semantic replacement; therefore, any contiguous time interval
 retains an internal chronological path. Every 512th vector is also recorded as
@@ -98,13 +96,13 @@ reallocates the nominal degree budget as follows:
 | 720-hour left/right | 2 + 2 | Broad-range compatibility |
 | Protected predecessor/successor | Separate | Guaranteed temporal backbone |
 
-For scale $W$ and newly inserted $v_i$, candidates combine semantic proposals,
-up to 64 evenly sampled prior vectors inside $W$, and the 16 immediate
-predecessors. A candidate $u$ is scored by
+For temporal scale **W** and newly inserted vector **vᵢ**, candidates combine
+semantic proposals, up to 64 evenly sampled prior vectors inside **W**, and the
+16 immediate predecessors. A candidate **u** is scored using:
 
-$$score(u,v_i)=\frac{d(u,v_i)}{\max(0,1-(t_i-t_u)/W)+\epsilon}.$$
+> **score(u, vᵢ) = d(u, vᵢ) ÷ [max(0, 1 − (tᵢ − tᵤ) ÷ W) + ε].**
 
-The best two candidates receive left edges from $v_i$; bounded reciprocal right
+The best two candidates receive left edges from **vᵢ**; bounded reciprocal right
 edges are added to the older nodes. Left and right arrays are independent, and
 each temporal scale has its own budget. Thus, a 720-hour edge cannot evict a
 24-hour edge, and future reciprocal insertions cannot consume the current
@@ -171,14 +169,14 @@ would provide little safe pruning value.
 
 ## 3.2 Coverage invariant
 
-For query component $Q$, let $B_Q$ contain every block whose conservative
-interval intersects $Q$. A block is removed only when its maximum timestamp is
+For query component **Q**, let **B_Q** contain every block whose conservative
+interval intersects **Q**. A block is removed only when its maximum timestamp is
 below the query start or its minimum is at/above the query end. The mandatory
-phase enforces
+phase enforces the invariant:
 
-$$\forall B_i\in B_Q,\qquad expanded(B_i)\ge e,$$
+> **For every block Bᵢ in B_Q: expanded(Bᵢ) ≥ e.**
 
-where $e$ is the configured block-local expansion count. This guarantees
+Here, **e** is the configured block-local expansion count. This guarantees
 **temporal block coverage**, not examination of every vector and not exact
 nearest-neighbor recall.
 
@@ -186,8 +184,8 @@ nearest-neighbor recall.
 
 **Coverage stage.** For each intersecting block, representatives outside the
 strict component are removed; component boundary IDs are added for a partial
-block. Up to $g$ representatives are scored, the closest becomes the seed, and
-a block-local heap performs at least $e$ expansions. Neighbors outside the
+block. Up to **g** representatives are scored, the closest becomes the seed, and
+a block-local heap performs at least **e** expansions. Neighbors outside the
 query are rejected before distance computation. Cross-block edges are deferred
 rather than consumed by the mandatory local budget.
 
@@ -202,10 +200,11 @@ component → intersecting blocks → representative scoring
 ```
 
 The mandatory queue cannot be stopped by the ordinary HNSW termination rule.
-For $R$ intersecting blocks, $g$ representatives, degree $M$, mandatory effort
-$e$, and $E$ later ANN expansions, a practical cost model is
+For **R** intersecting blocks, **g** representatives, graph degree **M**,
+mandatory effort **e**, vector dimension **d**, and **E** later ANN expansions,
+a practical cost model is:
 
-$$O(Rgd+ReMd+EMd).$$
+> **Query work = O(R·g·d + R·e·M·d + E·M·d).**
 
 This explains the principal trade-off: coverage is deterministic, but its cost
 grows with temporal width and database size. The experiment therefore evaluates
@@ -325,7 +324,8 @@ For every micro-batch, the writer:
 
 If Kafka redelivers a published batch, sequence and content hash make replay
 idempotent. Query processes pin one immutable generation for the full request:
-existing queries finish on generation $N$, while new queries switch to $N+1$.
+existing queries finish on generation **N**, while new queries switch to
+**N + 1**.
 
 ## 5.3 Final decision sequence
 
