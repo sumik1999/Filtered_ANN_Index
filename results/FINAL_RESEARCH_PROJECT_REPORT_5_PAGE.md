@@ -62,72 +62,85 @@ is rejected before its vector is read or its distance is computed.
 <w:p><w:r><w:br w:type="page"/></w:r></w:p>
 ```
 
-# 2. Flat multi-scale RT-HNSW design
+# 2. RT-HNSW and the range-aware extension
 
-## 2.1 Construction principle
+## 2.1 Base RT-HNSW organization
 
-Vectors are inserted in stable chronological order. Consequently, local vector
-IDs follow nondecreasing timestamp order, and a temporal predicate can be
-translated into one or more contiguous local-ID ranges by binary search.
+RT-HNSW is one graph over all vectors; temporal buckets are not separate ANN
+indexes. Before construction, source IDs are stably sorted by timestamp. The
+resulting local IDs satisfy
 
-FAISS HNSW is used only during construction to identify semantic candidates
-among vectors that have already arrived. Query execution uses custom persisted
-adjacency rather than the FAISS construction graph.
+$$t(v_0)\le t(v_1)\le\cdots\le t(v_{N-1}),$$
 
-## 2.2 Graph topology
+so binary search converts every half-open time interval into a contiguous
+local-ID range.
 
-| Edge class | Per-node budget | Purpose |
+For insertion $v_i$, a temporary FAISS HNSW searches only the already inserted
+vectors and returns up to 64 semantic candidates. The closest candidates form a
+bounded reciprocal semantic list. Separately, $v_i$ is linked to $v_{i-1}$ and
+the predecessor receives a successor link. These two temporal links are
+protected from semantic replacement; therefore, any contiguous time interval
+retains an internal chronological path. Every 512th vector is also recorded as
+a gateway for query entry selection. FAISS is a construction aid only: queries
+traverse the persisted RT-HNSW adjacency.
+
+## 2.2 Range-aware multi-scale topology
+
+The base design primarily connects semantic neighbors and can lose useful edges
+when a narrow filter removes their destinations. The final range-aware variant
+reallocates the nominal degree budget as follows:
+
+| Edge class | Budget | Function |
 |---|---:|---|
-| Semantic | 20 | Preserve vector-space proximity |
-| 24-hour left/right | 2 + 2 | Support narrow temporal neighborhoods |
-| 168-hour left/right | 2 + 2 | Support weekly-scale predicates |
-| 720-hour left/right | 2 + 2 | Support broad predicates |
-| Temporal predecessor/successor | Separate | Guarantee chronological connectivity |
+| Semantic | 20 | Global vector-space proximity |
+| 24-hour left/right | 2 + 2 | Short-range temporal compatibility |
+| 168-hour left/right | 2 + 2 | Weekly-scale compatibility |
+| 720-hour left/right | 2 + 2 | Broad-range compatibility |
+| Protected predecessor/successor | Separate | Guaranteed temporal backbone |
 
-The predecessor and successor edges are protected: semantic pruning cannot
-remove them. Therefore, every contiguous temporal range retains a basic path.
+For scale $W$ and newly inserted $v_i$, candidates combine semantic proposals,
+up to 64 evenly sampled prior vectors inside $W$, and the 16 immediate
+predecessors. A candidate $u$ is scored by
 
-Range edges are selected independently at each scale. Their candidate pools
-combine semantic candidates, samples from the relevant temporal window, and
-immediate chronological neighbors. Candidates are ranked by vector distance
-adjusted by temporal co-eligibility. Independent budgets prevent one temporal
-scale from consuming all range-aware capacity.
+$$score(u,v_i)=\frac{d(u,v_i)}{\max(0,1-(t_i-t_u)/W)+\epsilon}.$$
 
-## 2.3 Query mechanism
+The best two candidates receive left edges from $v_i$; bounded reciprocal right
+edges are added to the older nodes. Left and right arrays are independent, and
+each temporal scale has its own budget. Thus, a 720-hour edge cannot evict a
+24-hour edge, and future reciprocal insertions cannot consume the current
+node's left-side allocation.
 
-The search sequence is:
+## 2.3 Strict query traversal
 
-1. Normalize overlapping intervals into a disjoint half-open union.
-2. Binary-search the ordered timestamp array to locate eligible local-ID
-   components.
-3. Count eligible vectors.
-4. If at most 5,000 vectors are eligible, perform exact pre-filtered search.
-5. Otherwise, choose periodic entry points located inside the component.
-6. Run a beam search over semantic, temporal, and multi-scale range edges.
-7. Reject an edge destination outside the component before distance evaluation.
-8. Search disjoint components independently, deduplicate candidates, and exact
-   rerank the retained set.
+For each normalized predicate component, timestamp binary search yields
+`[local_left, local_right)`. If the eligible population is at most 5,000, the
+system performs exact pre-filtered search. Otherwise it samples at most 16
+in-range gateways, computes their query distances, and retains the closest four
+as entry seeds.
+
+Search maintains a minimum candidate heap and a maximum result heap of size
+`efSearch`. When expanding a node, semantic, temporal, and enabled multi-scale
+neighbors are examined. The local-ID boundary test occurs before vector access:
 
 ```text
-interval predicate
-    → timestamp-to-local-ID routing
-    → exact fallback OR in-range graph entries
-    → strict multi-scale beam traversal
-    → deduplication and exact reranking
+if neighbor < local_left or neighbor >= local_right: reject
+else if unseen: compute distance and update the beam
 ```
 
-This architecture differs from post-filtering because the predicate constrains
-entry selection and every graph expansion. It differs from bucket HNSW because
-all vectors remain in one logical graph.
+Traversal terminates when the closest unexplored candidate is farther than the
+worst retained beam element. Disjoint components are searched independently;
+their candidates are deduplicated and exactly reranked.
 
-## 2.4 Design strengths and limitations
+```text
+predicate → local-ID components → exact fallback or gateway seeds
+          → strict semantic + temporal + range beam → exact rerank
+```
 
-Flat RT-HNSW provides strict filtering, compact custom adjacency, and a tunable
-quality-cost curve through `efSearch`. Its main limitation is broad-range
-recall: at practical beam widths, semantic navigation inside a large eligible
-subgraph remains approximate. Significantly late records also require a rebuild,
-repair procedure, or separate delta index because direct insertion would break
-chronological local-ID order.
+The range-aware topology does not guarantee exact ANN recall. Its purpose is to
+increase the probability that useful edges remain valid after strict filtering,
+while the protected chain preserves basic connectivity. Very late records still
+require rebuild, bounded repair, or a delta index because appending them would
+violate chronological local-ID order.
 
 <div class="page-break"></div>
 
@@ -135,84 +148,68 @@ chronological local-ID order.
 <w:p><w:r><w:br w:type="page"/></w:r></w:p>
 ```
 
-# 3. Coverage-bounded RT-HNSW design
+# 3. Coverage-bounded range-aware RT-HNSW
 
-## 3.1 Motivation
+## 3.1 Purpose and metadata
 
-A normal ANN beam prioritizes vector distance. For a broad temporal predicate,
-its best entry points may be concentrated in one part of the timeline. Other
-eligible regions can receive no exploration even though they may contain exact
-top-$k$ neighbors. Coverage-bounded RT-HNSW tests whether mandatory regional
-participation corrects this failure.
+Range-aware edges improve the chance of navigating inside a filter, but the
+single global beam can still concentrate on a few semantically attractive time
+regions. The coverage-bounded variant leaves the graph unchanged and adds a
+routing overlay that requires every intersecting region to participate.
 
-The underlying flat graph is unchanged. Coverage is implemented as a compact
-routing overlay and a separate scheduling phase.
+Chronological IDs are partitioned into fixed-population blocks of 512 vectors
+(approximately 196 blocks at 100,000 vectors). Each block persists local-ID
+offsets, conservative minimum/maximum timestamps, and four representatives. Up
+to 64 vectors are sampled uniformly inside the block; representatives are the
+first vector, last vector, sampled vector nearest the sample centroid, and a
+farthest-point vector. The complete default overlay is approximately 8 KB,
+excluding array headers.
 
-## 3.2 Temporal block metadata
+Metadata describes a precise block rather than transitive HNSW reachability.
+The latter would rapidly expand toward the whole timeline in a cyclic graph and
+would provide little safe pruning value.
 
-Chronological local IDs are divided into fixed-population blocks. With block
-size 512, the 100,000-vector index contains approximately 196 blocks. Each block
-stores:
+## 3.2 Coverage invariant
 
-- first and last local-ID offsets;
-- conservative minimum and maximum timestamps;
-- first and last temporal vectors;
-- an approximate semantic medoid; and
-- a farthest-point representative.
+For query component $Q$, let $B_Q$ contain every block whose conservative
+interval intersects $Q$. A block is removed only when its maximum timestamp is
+below the query start or its minimum is at/above the query end. The mandatory
+phase enforces
 
-The default metadata occupies approximately 8 KB, excluding array headers.
-Min/max values describe only a precisely defined block, not everything
-transitively reachable through a cyclic HNSW node.
+$$\forall B_i\in B_Q,\qquad expanded(B_i)\ge e,$$
 
-## 3.3 Coverage invariant
+where $e$ is the configured block-local expansion count. This guarantees
+**temporal block coverage**, not examination of every vector and not exact
+nearest-neighbor recall.
 
-Let $B_Q$ be the blocks whose timestamp intervals intersect query component
-$Q$. The mandatory phase requires
+## 3.3 Two-stage search procedure
 
-$$
-\forall B_i\in B_Q,\quad expanded(B_i)\ge e,
-$$
+**Coverage stage.** For each intersecting block, representatives outside the
+strict component are removed; component boundary IDs are added for a partial
+block. Up to $g$ representatives are scored, the closest becomes the seed, and
+a block-local heap performs at least $e$ expansions. Neighbors outside the
+query are rejected before distance computation. Cross-block edges are deferred
+rather than consumed by the mandatory local budget.
 
-where $e$ is the configured minimum expansion count. A block can be pruned only
-when its conservative bounds are provably disjoint from $Q$.
-
-This is a **block-coverage guarantee**. It does not guarantee that every
-eligible vector is examined or that the exact nearest neighbors are found.
-
-## 3.4 Two-stage search
-
-**Stage 1 — mandatory temporal coverage**
-
-1. Discover every block intersecting the strict query component.
-2. Remove representatives outside the exact component.
-3. Score the remaining representatives against the query.
-4. Select the closest representative as the block seed.
-5. Perform at least $e$ block-local expansions.
-6. Preserve strict filtering before every distance computation.
-
-**Stage 2 — semantic ANN search**
-
-All block frontiers are merged into one global candidate heap. The ordinary
-strict RT-HNSW beam then spends its remaining effort according to vector
-distance.
+**ANN stage.** All scored local frontiers are merged into the ordinary global
+candidate heap. Strict range-aware RT-HNSW then resumes semantic prioritization
+with its normal `efSearch` result capacity.
 
 ```text
-query component
-    → complete block discovery
-    → mandatory block-local queues
-    → merged frontier
-    → global strict semantic beam
+component → intersecting blocks → representative scoring
+          → mandatory local expansions → merged global frontier
+          → strict range-aware beam → exact rerank
 ```
 
-The mandatory queue is independent of ordinary HNSW termination. A semantically
-promising region cannot cause another intersecting block to be skipped.
+The mandatory queue cannot be stopped by the ordinary HNSW termination rule.
+For $R$ intersecting blocks, $g$ representatives, degree $M$, mandatory effort
+$e$, and $E$ later ANN expansions, a practical cost model is
 
-## 3.5 Expected behavior
+$$O(Rgd+ReMd+EMd).$$
 
-Coverage improves robustness when flat search completely misses a relevant
-region. Its cost grows with the number of intersecting blocks. Broad ranges and
-larger databases therefore pay the greatest overhead. This trade-off motivates
-an equal-computation evaluation rather than comparison at `efSearch` alone.
+This explains the principal trade-off: coverage is deterministic, but its cost
+grows with temporal width and database size. The experiment therefore evaluates
+both same-`efSearch` quality and quality at matched distance computations.
 
 <div class="page-break"></div>
 
