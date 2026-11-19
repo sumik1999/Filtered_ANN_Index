@@ -55,6 +55,11 @@ Implemented:
 - protected edge classes by temporal direction;
 - multi-scale range and skip-epoch bridges;
 - arbitrary-length packed `uint64` epoch bitmaps;
+- two-level CSR epoch-grouped adjacency blocks;
+- vectorized neighbor filtering and batched distance evaluation;
+- region-assigned portal directories and upper portal navigation;
+- a fixed 32-edge base budget with 16 broad semantic edges;
+- Kafka micro-batch continuation from persisted insertion state;
 - portal coverage summaries;
 - strict single and disjoint interval search;
 - exact fallback;
@@ -63,11 +68,8 @@ Implemented:
 
 Not yet implemented:
 
-- Kafka append support for this experimental topology;
-- hierarchy-region coverage bitmaps;
-- packed epoch-grouped adjacency blocks;
 - deletion/expiration bitmap reference counts;
-- C++ bitmap and adjacency traversal;
+- fused C++ bitmap, heap and adjacency traversal;
 - bitmap combination with non-temporal metadata.
 
 The persisted 100k experiment uses one 64-bit word because its timeline spans only 38 daily epochs. The implementation supports more words for longer timelines.

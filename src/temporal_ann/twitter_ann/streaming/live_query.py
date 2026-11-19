@@ -17,6 +17,10 @@ from typing import Any
 import numpy as np
 
 from ..rolling_hnsw import RollingSearchConfig, RollingTemporalHNSW
+from ..temporal_bitmap_hnsw import (
+    TemporalBitmapHNSW,
+    TemporalBitmapSearchConfig,
+)
 
 
 @dataclass
@@ -25,7 +29,7 @@ class _LoadedSnapshot:
     directory: Path
     manifest: dict[str, Any]
     vectors: np.ndarray
-    index: RollingTemporalHNSW
+    index: RollingTemporalHNSW | TemporalBitmapHNSW
     lease_handle: Any
     loaded_at_ms: int
     references: int = 0
@@ -55,7 +59,7 @@ class SnapshotHandle(AbstractContextManager):
         return self._snapshot.last_sequence
 
     @property
-    def index(self) -> RollingTemporalHNSW:
+    def index(self) -> RollingTemporalHNSW | TemporalBitmapHNSW:
         return self._snapshot.index
 
     @property
@@ -66,7 +70,7 @@ class SnapshotHandle(AbstractContextManager):
         self,
         query: np.ndarray,
         intervals: list[list[int]],
-        config: RollingSearchConfig,
+        config: RollingSearchConfig | TemporalBitmapSearchConfig,
     ) -> dict[str, Any]:
         if self._released:
             raise RuntimeError("snapshot handle has been released")
@@ -121,8 +125,14 @@ class LiveSnapshotManager:
                         digest.update(chunk)
                 if digest.hexdigest() != expected:
                     raise ValueError(f"snapshot checksum mismatch: {filename}")
-            vectors = np.load(directory / files["vectors"], mmap_mode="r")
-            index = RollingTemporalHNSW(directory, vectors)
+            vector_file = files.get("vectors", files.get("stream_vectors"))
+            if vector_file is None:
+                raise ValueError("snapshot does not contain vectors")
+            vectors = np.load(directory / vector_file, mmap_mode="r")
+            if "temporal bitmap" in manifest.get("backend", ""):
+                index = TemporalBitmapHNSW(directory, vectors)
+            else:
+                index = RollingTemporalHNSW(directory, vectors)
             return _LoadedSnapshot(
                 generation=generation,
                 directory=directory,
@@ -346,18 +356,30 @@ class _QueryHandler(BaseHTTPRequestHandler):
             intervals = request["intervals"]
             min_sequence = request.get("min_sequence")
             timeout = float(request.get("wait_timeout_ms", 0)) / 1000.0
-            config = RollingSearchConfig(
-                k=int(request.get("k", 100)),
-                ef_search=int(request.get("ef_search", 128)),
-                exact_threshold=int(request.get("exact_threshold", 5_000)),
-                gateway_candidates=int(request.get("gateway_candidates", 16)),
-                gateway_seeds=int(request.get("gateway_seeds", 4)),
-                use_temporal_edges=bool(request.get("use_temporal_edges", True)),
-                use_gateway_edges=bool(request.get("use_gateway_edges", False)),
-                use_range_edges=bool(request.get("use_range_edges", True)),
-                use_hierarchy=False,
-            )
+            common = {
+                "k": int(request.get("k", 100)),
+                "ef_search": int(request.get("ef_search", 128)),
+                "exact_threshold": int(request.get("exact_threshold", 5_000)),
+                "gateway_candidates": int(request.get("gateway_candidates", 16)),
+                "gateway_seeds": int(request.get("gateway_seeds", 4)),
+            }
             with self.server.manager.acquire(min_sequence, timeout) as snapshot:
+                if isinstance(snapshot.index, TemporalBitmapHNSW):
+                    config = TemporalBitmapSearchConfig(
+                        **common,
+                        use_temporal_edges=bool(request.get("use_temporal_edges", True)),
+                        use_range_edges=bool(request.get("use_range_edges", True)),
+                        use_bitmap_pruning=bool(request.get("use_bitmap_pruning", True)),
+                        use_portal_navigation=bool(request.get("use_portal_navigation", True)),
+                    )
+                else:
+                    config = RollingSearchConfig(
+                        **common,
+                        use_temporal_edges=bool(request.get("use_temporal_edges", True)),
+                        use_gateway_edges=bool(request.get("use_gateway_edges", False)),
+                        use_range_edges=bool(request.get("use_range_edges", True)),
+                        use_hierarchy=False,
+                    )
                 result = snapshot.search(query, intervals, config)
                 response = {
                     "generation": snapshot.generation,
@@ -368,9 +390,9 @@ class _QueryHandler(BaseHTTPRequestHandler):
                     "eligible_count": result["eligible_count"],
                     "candidate_count": result["candidate_count"],
                     "distance_computations": result["distance_computations"],
-                    "routing_ms": result["routing_ms"],
-                    "search_ms": result["search_ms"],
-                    "rerank_ms": result["rerank_ms"],
+                    "routing_ms": result.get("routing_ms", 0.0),
+                    "search_ms": result.get("search_ms", result["total_ms"]),
+                    "rerank_ms": result.get("rerank_ms", 0.0),
                     "total_ms": result["total_ms"],
                 }
             self._json_response(HTTPStatus.OK, response)

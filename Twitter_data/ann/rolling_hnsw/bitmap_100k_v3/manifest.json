@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "backend": "time-stretched temporal bitmap HNSW prototype",
+  "metric": "squared L2",
+  "vector_count": 100000,
+  "dimensions": 384,
+  "config": {
+    "vector_count": 100000,
+    "local_semantic_degree": 4,
+    "historical_semantic_degree": 8,
+    "future_reciprocal_degree": 8,
+    "local_window_hours": 24,
+    "range_degree_per_side": 1,
+    "range_scales_hours": "24,168,720",
+    "range_candidate_count": 64,
+    "bridge_degree_per_side": 1,
+    "bridge_scales_epochs": "1,16",
+    "epoch_hours": 24,
+    "gateway_period": 512,
+    "portal_semantic_degree": 4,
+    "portal_epoch_radius": 1,
+    "persist_unpacked_adjacency": false,
+    "persist_incremental_state": false,
+    "construction_candidates": 64,
+    "ef_construction": 200,
+    "candidate_index_m": 32,
+    "threads": 4
+  },
+  "epoch_origin_ms": 1609459200000,
+  "epoch_count": 38,
+  "bitmap_words": 1,
+  "edge_group_names": [
+    "local",
+    "historical",
+    "future",
+    "range_24h",
+    "range_168h",
+    "range_720h",
+    "bridge",
+    "temporal"
+  ],
+  "range_scales_hours": [
+    24,
+    168,
+    720
+  ],
+  "bridge_scales_epochs": [
+    1,
+    16
+  ],
+  "gateway_count": 195,
+  "construction_seconds": 136.6536495830078,
+  "files": {
+    "global_ids": "global_ids.npy",
+    "timestamps": "timestamps.npy",
+    "epoch_ids": "epoch_ids.npy",
+    "gateway_ids": "gateway_ids.npy",
+    "edge_epoch_bitmaps": "edge_epoch_bitmaps.npy",
+    "packed_group_block_offsets": "packed_group_block_offsets.npy",
+    "packed_block_epochs": "packed_block_epochs.npy",
+    "packed_block_neighbor_offsets": "packed_block_neighbor_offsets.npy",
+    "packed_neighbors": "packed_neighbors.npy",
+    "portal_coverage_bitmaps": "portal_coverage_bitmaps.npy",
+    "portal_semantic_neighbors": "portal_semantic_neighbors.npy",
+    "portal_temporal_neighbors": "portal_temporal_neighbors.npy",
+    "portal_epochs": "portal_epochs.npy",
+    "epoch_portal_offsets": "epoch_portal_offsets.npy",
+    "epoch_portal_rows": "epoch_portal_rows.npy"
+  },
+  "artifact_size_bytes": 34468600
+}

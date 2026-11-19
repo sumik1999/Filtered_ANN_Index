@@ -37,6 +37,7 @@ class TwitterTemporalBitmapHNSWTests(unittest.TestCase):
             bridge_scales_epochs="1,2,4",
             epoch_hours=1,
             gateway_period=2,
+            persist_unpacked_adjacency=True,
             construction_candidates=4,
             ef_construction=20,
             candidate_index_m=2,
@@ -51,6 +52,22 @@ class TwitterTemporalBitmapHNSWTests(unittest.TestCase):
 
     def tearDown(self):
         self.temporary.cleanup()
+
+    def test_default_configuration_has_fixed_base_degree_32(self):
+        config = TemporalBitmapBuildConfig()
+        nominal = (
+            config.local_semantic_degree
+            + config.historical_semantic_degree
+            + config.future_reciprocal_degree
+            + 2 * config.range_degree_per_side * len(config.range_scales())
+            + 2 * config.bridge_degree_per_side * len(config.bridge_scales())
+            + 2
+        )
+        self.assertEqual(nominal, 32)
+        self.assertEqual(
+            config.historical_semantic_degree + config.future_reciprocal_degree,
+            16,
+        )
 
     def test_new_nodes_have_historical_edges_and_old_nodes_get_future_edges(self):
         self.assertTrue(np.any(self.index.historical_neighbors[1:] >= 0))
@@ -108,6 +125,21 @@ class TwitterTemporalBitmapHNSWTests(unittest.TestCase):
                         ),
                         (name, row, int(neighbor), epoch),
                     )
+
+    def test_epoch_regions_assign_every_portal_exactly_once(self):
+        rows = np.asarray(self.index.epoch_portal_rows)
+        np.testing.assert_array_equal(np.sort(rows), np.arange(len(self.index.gateway_ids)))
+        for epoch in range(len(self.index.epoch_portal_offsets) - 1):
+            left = int(self.index.epoch_portal_offsets[epoch])
+            right = int(self.index.epoch_portal_offsets[epoch + 1])
+            self.assertTrue(np.all(self.index.portal_epochs[rows[left:right]] == epoch))
+
+    def test_packed_epoch_blocks_are_sorted_within_every_node_group(self):
+        groups = len(self.index.group_index)
+        for flat_group in range(len(self.index.global_ids) * groups):
+            left = int(self.index.packed_group_block_offsets[flat_group])
+            right = int(self.index.packed_group_block_offsets[flat_group + 1])
+            self.assertTrue(np.all(np.diff(self.index.packed_block_epochs[left:right]) >= 0))
 
     def test_bitmap_pruning_is_result_equivalent_and_skips_groups(self):
         query = np.asarray(self.vectors[self.index.global_ids[8]], dtype=np.float32)

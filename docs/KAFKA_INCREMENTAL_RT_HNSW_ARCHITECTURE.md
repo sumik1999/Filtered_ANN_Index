@@ -409,9 +409,12 @@ Implemented in this branch for the flat multi-scale topology:
 - differential tests against the uninterrupted offline builder.
 
 The correctness-first publisher currently rewrites complete NumPy artifacts for
-each generation. It supports the recommended flat topology only. Chunked
-append-only arrays, generation garbage collection, hierarchy updates and broker
-failure-injection tests remain before production use.
+each generation. In addition to the recommended flat topology, the experimental
+`--topology temporal-bitmap` writer resumes persisted insertion state, inserts
+only new records, and regenerates immutable packed epoch blocks and region
+portal summaries. Chunked append-only arrays, generation garbage collection,
+hierarchy updates and broker failure-injection tests remain before production
+use.
 
 ### Phase 3: live query snapshots
 

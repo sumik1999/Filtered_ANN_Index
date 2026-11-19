@@ -275,7 +275,9 @@ def run_index_writer(args: argparse.Namespace) -> None:
     Consumer, Producer, TopicPartition = _kafka()
     import fcntl
     from ..rolling_hnsw import RollingBuildConfig
+    from ..temporal_bitmap_hnsw import TemporalBitmapBuildConfig
     from .incremental_writer import RollingTemporalHNSWWriter
+    from .temporal_bitmap_writer import TemporalBitmapKafkaWriter
 
     config = RollingBuildConfig(
         vector_count=args.capacity,
@@ -297,9 +299,18 @@ def run_index_writer(args: argparse.Namespace) -> None:
     except BlockingIOError as error:
         lease_handle.close()
         raise RuntimeError(f"another writer owns {args.index}") from error
-    writer = RollingTemporalHNSWWriter.create(
-        args.index, config, dimensions=384, index_name=args.index_name
-    )
+    if args.topology == "temporal-bitmap":
+        bitmap_config = TemporalBitmapBuildConfig(
+            vector_count=args.capacity,
+            persist_incremental_state=True,
+        )
+        writer = TemporalBitmapKafkaWriter(
+            args.index, bitmap_config, index_name=args.index_name
+        )
+    else:
+        writer = RollingTemporalHNSWWriter.create(
+            args.index, config, dimensions=384, index_name=args.index_name
+        )
     consumer = Consumer(_consumer_config(args.bootstrap, args.group))
     checkpoint_producer = Producer(_producer_config(args.bootstrap))
     consumer.subscribe([ORDERED_TOPIC])
@@ -388,6 +399,10 @@ def index_writer_parser() -> argparse.ArgumentParser:
     parser.add_argument("--group", default="rt-hnsw-index-writer-v1")
     parser.add_argument("--index-name", default="twitter-rt-hnsw")
     parser.add_argument("--index", type=Path, default=Path("Twitter_data/ann/streaming_rt_hnsw"))
+    parser.add_argument(
+        "--topology", choices=("flat-multiscale", "temporal-bitmap"),
+        default="flat-multiscale",
+    )
     parser.add_argument("--capacity", type=int, default=10_000_000)
     parser.add_argument("--batch-size", type=int, default=256)
     parser.add_argument("--poll-timeout", type=float, default=1.0)

@@ -311,18 +311,32 @@ conservative epoch bitmap per edge group:
 
 ```bash
 build-twitter-temporal-bitmap-hnsw \
-  --output Twitter_data/ann/rolling_hnsw/bitmap_100k
+  --output Twitter_data/ann/rolling_hnsw/bitmap_100k_v3
 benchmark-twitter-temporal-bitmap-hnsw \
-  --index Twitter_data/ann/rolling_hnsw/bitmap_100k \
+  --index Twitter_data/ann/rolling_hnsw/bitmap_100k_v3 \
   --ef-search 256 \
   --output results/twitter_rt_hnsw_100k/temporal_bitmap_ef256
 ```
 
-At efSearch 256, bitmap pruning preserves identical 0.9491 recall and reduces
-edge examination by 8.7% and explicit out-of-range rejection by 27.5%. Python
-bitmap dispatch raises latency, and overall recall remains below the existing
+The v2 index uses a fixed 32-edge base budget, packed epoch-grouped CSR
+adjacency, batched NumPy distance evaluation and region-assigned upper portals.
+At efSearch 256, epoch pruning preserves identical 0.9443 recall while reducing
+edge examination by 32.2% and explicit out-of-range rejection by 88.9%. Small
+per-node NumPy calls still raise latency, and quality remains below the existing
 flat multi-scale graph. See
-`results/twitter_rt_hnsw_100k/TEMPORAL_BITMAP_ANALYSIS.md`.
+`results/twitter_rt_hnsw_100k/TEMPORAL_BITMAP_V2_ANALYSIS.md`.
+
+Consume the ordered Kafka topic into this topology with:
+
+```bash
+kafka-twitter-index-writer \
+  --topology temporal-bitmap \
+  --index-name twitter-rt-hnsw \
+  --index Twitter_data/ann/streaming_bitmap_rt_hnsw
+```
+
+Only new records execute graph insertion; immutable packed blocks, epoch
+bitmaps and portal directories are regenerated for each published generation.
 
 A search request is strict to one immutable generation:
 

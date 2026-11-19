@@ -40,6 +40,8 @@ def _aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "mean_bitmap_groups_considered": float(np.mean([row["bitmap_groups_considered"] for row in rows])),
         "mean_bitmap_groups_skipped": float(np.mean([row["bitmap_groups_skipped"] for row in rows])),
         "mean_out_of_range_edges_rejected": float(np.mean([row["out_of_range_edges_rejected"] for row in rows])),
+        "mean_portal_nodes_visited": float(np.mean([row["portal_nodes_visited"] for row in rows])),
+        "mean_portal_edges_examined": float(np.mean([row["portal_edges_examined"] for row in rows])),
     }
 
 
@@ -54,8 +56,14 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         gateway_candidates=args.gateway_candidates, gateway_seeds=args.gateway_seeds,
     )
     variants = {
-        "bitmap_pruning": base,
-        "no_bitmap_pruning": replace(base, use_bitmap_pruning=False),
+        "packed_bitmap_portals": base,
+        "packed_no_bitmap_portals": replace(base, use_bitmap_pruning=False),
+        "packed_bitmap_direct_entries": replace(
+            base, use_portal_navigation=False
+        ),
+        "packed_no_bitmap_direct_entries": replace(
+            base, use_bitmap_pruning=False, use_portal_navigation=False
+        ),
     }
     rows = []
     for variant, config in variants.items():
@@ -80,6 +88,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 "bitmap_groups_considered": result["bitmap_groups_considered"],
                 "bitmap_groups_skipped": result["bitmap_groups_skipped"],
                 "out_of_range_edges_rejected": result["out_of_range_edges_rejected"],
+                "portal_nodes_visited": result["portal_nodes_visited"],
+                "portal_edges_examined": result["portal_edges_examined"],
             })
         print(f"bitmap benchmark completed: {variant}", flush=True)
     grouped = defaultdict(list)
@@ -114,7 +124,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
 
 def parser() -> argparse.ArgumentParser:
     value = argparse.ArgumentParser(description="Benchmark time-stretched bitmap RT-HNSW")
-    value.add_argument("--index", type=Path, default=Path("Twitter_data/ann/rolling_hnsw/bitmap_100k"))
+    value.add_argument("--index", type=Path, default=Path("Twitter_data/ann/rolling_hnsw/bitmap_100k_v3"))
     value.add_argument("--vectors", type=Path, default=Path("Twitter_data/processed/database_vectors.npy"))
     value.add_argument("--queries", type=Path, default=Path("Twitter_data/processed/query_vectors.npy"))
     value.add_argument("--workload", type=Path, default=Path("Twitter_data/workloads/rt_hnsw_100k_queries.jsonl"))
