@@ -260,6 +260,11 @@ benchmark-twitter-gateway-oracle \
   --candidate-step 64 --ef-search 256
 ```
 
+The detailed comparison of global post-filter HNSW, density-balanced bucket
+HNSW, flat multi-scale RT-HNSW and packed temporal-bitmap RT-HNSW is in
+`results/FOUR_TEMPORAL_HNSW_ARCHITECTURES_REPORT.md`. It separates the 990k and
+100k evaluation panels to avoid invalid direct comparisons.
+
 The default workload output is `results/twitter_rt_hnsw_100k/`. This remains a
 research prototype, not a production FAISS HNSW replacement: it has no adaptive
 gateways, late-arrival repair, expiration, or concurrent update support. The
