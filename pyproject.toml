@@ -44,6 +44,7 @@ benchmark-twitter-adaptive = "temporal_ann.twitter_ann.varied_benchmark:adaptive
 build-twitter-rt-hnsw = "temporal_ann.twitter_ann.rolling_hnsw:build_main"
 generate-twitter-rt-workload = "temporal_ann.twitter_ann.rolling_benchmark:generate_main"
 benchmark-twitter-rt-hnsw = "temporal_ann.twitter_ann.rolling_benchmark:benchmark_main"
+benchmark-twitter-gateway-oracle = "temporal_ann.twitter_ann.gateway_oracle:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

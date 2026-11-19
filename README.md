@@ -251,10 +251,20 @@ build-twitter-rt-hnsw \
   --hierarchy-range-scales-hours 24,168,720
 ```
 
+Evaluate periodic, random, semantic-cluster, temporal-density and greedy-oracle
+entry directories at the same 195-gateway budget, without gateway edges:
+
+```bash
+benchmark-twitter-gateway-oracle \
+  --index Twitter_data/ann/rolling_hnsw/flat_100k_multiscale \
+  --candidate-step 64 --ef-search 256
+```
+
 The default workload output is `results/twitter_rt_hnsw_100k/`. This remains a
 research prototype, not a production FAISS HNSW replacement: it has no adaptive
 gateways, late-arrival repair, expiration, or concurrent update support. The
-gated adaptive gateway plan is documented in `docs/ADAPTIVE_GATEWAY_PLAN.md`.
+gated adaptive gateway plan and failed oracle acceptance result are documented
+in `docs/ADAPTIVE_GATEWAY_PLAN.md`.
 
 ## Test
 

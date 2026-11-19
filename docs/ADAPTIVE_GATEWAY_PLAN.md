@@ -1,6 +1,6 @@
 # Adaptive gateway experiment plan
 
-Adaptive gateways remain a planned experiment, not part of the current index. Existing periodic gateway edges and both tested upper hierarchies produce negligible recall gains, so adaptive promotion must pass an offline headroom test before implementation.
+Adaptive gateways remain a planned experiment, not part of the current index. The equal-budget offline headroom test has now been completed and failed its acceptance gate: the greedy facility-location oracle did not improve held-out recall and reduced distance computations by only 0.21%. Online adaptive promotion is therefore deferred unless a future gateway-edge or search design creates measurable oracle headroom.
 
 ## Objective
 

@@ -698,16 +698,23 @@ class RollingTemporalHNSW:
         start: int,
         end: int,
         config: RollingSearchConfig,
+        entry_gateway_ids: np.ndarray | None = None,
     ) -> tuple[list[tuple[float, int]], int]:
-        left = int(np.searchsorted(self.gateway_timestamps, start, side="left"))
-        right = int(np.searchsorted(self.gateway_timestamps, end, side="left"))
+        gateway_ids = (
+            np.asarray(entry_gateway_ids, dtype=np.int64)
+            if entry_gateway_ids is not None
+            else self.gateway_ids
+        )
+        gateway_timestamps = np.asarray(self.timestamps[gateway_ids], dtype=np.int64)
+        left = int(np.searchsorted(gateway_timestamps, start, side="left"))
+        right = int(np.searchsorted(gateway_timestamps, end, side="left"))
         if left >= right:
             return [], 0
         available = right - left
         sample_count = min(config.gateway_candidates, available)
         positions = np.linspace(left, right - 1, sample_count, dtype=np.int64)
         positions = np.unique(positions)
-        local_ids = np.asarray(self.gateway_ids[positions], dtype=np.int64)
+        local_ids = np.asarray(gateway_ids[positions], dtype=np.int64)
         database_ids = self.global_ids[local_ids]
         delta = np.asarray(self.vectors[database_ids], dtype=np.float32) - query
         distances = np.einsum("ij,ij->i", delta, delta)
@@ -842,6 +849,7 @@ class RollingTemporalHNSW:
         start: int,
         end: int,
         config: RollingSearchConfig,
+        entry_gateway_ids: np.ndarray | None = None,
     ) -> dict[str, Any]:
         upper_seeds, upper_diagnostics = self._hierarchical_seed_pairs(
             query, local_left, local_right, config
@@ -852,7 +860,7 @@ class RollingTemporalHNSW:
             component_method = "strict_hierarchy"
         else:
             seeds, gateway_candidates = self._gateway_seed_pairs(
-                query, start, end, config
+                query, start, end, config, entry_gateway_ids
             )
             component_method = "strict_graph"
         if not seeds:
@@ -959,11 +967,19 @@ class RollingTemporalHNSW:
         query: np.ndarray,
         intervals: Iterable[Iterable[int]],
         search_config: RollingSearchConfig = RollingSearchConfig(),
+        entry_gateway_ids: np.ndarray | None = None,
     ) -> dict[str, Any]:
         search_config.validate()
         query = np.asarray(query, dtype=np.float32)
         if query.shape != (self.manifest["dimensions"],):
             raise ValueError(f"query must have shape ({self.manifest['dimensions']},)")
+        if entry_gateway_ids is not None:
+            entry_gateway_ids = np.asarray(entry_gateway_ids, dtype=np.int64)
+            if (entry_gateway_ids.ndim != 1 or not len(entry_gateway_ids)
+                    or np.any(entry_gateway_ids < 0)
+                    or np.any(entry_gateway_ids >= len(self.global_ids))
+                    or np.any(np.diff(entry_gateway_ids) <= 0)):
+                raise ValueError("entry gateway IDs must be non-empty, unique and ordered")
         normalized = normalize_intervals(intervals)
         route_started = time.perf_counter_ns()
         components = self._components(normalized)
@@ -1013,7 +1029,8 @@ class RollingTemporalHNSW:
                     methods.append("exact_component")
                     continue
                 result = self._strict_component_search(
-                    query, left, right, start, end, search_config
+                    query, left, right, start, end, search_config,
+                    entry_gateway_ids,
                 )
                 candidate_parts.append(result["local_ids"])
                 methods.append(result["component_method"])

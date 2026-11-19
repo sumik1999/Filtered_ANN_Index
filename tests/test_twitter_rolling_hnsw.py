@@ -158,6 +158,25 @@ class TwitterRollingHNSWTests(unittest.TestCase):
             self.assertGreater(result["upper_nodes_visited"], 0)
             self.assertGreater(result["upper_range_edges_examined"], 0)
 
+    def test_search_accepts_an_equal_budget_entry_gateway_override(self):
+        with tempfile.TemporaryDirectory() as directory:
+            index = self.build(directory)
+            config = RollingSearchConfig(
+                k=2, ef_search=4, exact_threshold=0,
+                gateway_candidates=4, gateway_seeds=2,
+                use_hierarchy=False, use_gateway_edges=False,
+            )
+            result = index.search(
+                np.array([4.0, 0.0], dtype=np.float32), [[1000, 7000]],
+                config, entry_gateway_ids=np.array([1, 3, 5, 7]),
+            )
+            self.assertGreater(result["gateway_candidates"], 0)
+            with self.assertRaises(ValueError):
+                index.search(
+                    np.array([4.0, 0.0], dtype=np.float32), [[1000, 7000]],
+                    config, entry_gateway_ids=np.array([3, 1]),
+                )
+
     def test_disjoint_intervals_merge_exact_components(self):
         with tempfile.TemporaryDirectory() as directory:
             index = self.build(directory)
