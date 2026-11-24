@@ -7,30 +7,37 @@ the location of the query in the 384-dimensional MiniLM vector space. In this
 dataset, "spatial" means embedding/vector space, not geographic location; the
 selected DLT-Tweets data does not provide reliable geographic coordinates.
 
-Every workload query has the semantics:
+Every workload query returns top-k by squared L2 distance subject to either:
 
 ```text
-top-k by squared L2 distance to q
-where timestamp is in interval_1 OR ... OR interval_f
+timestamp in interval_1 OR ... OR interval_f
+```
+
+or:
+
+```text
+timestamp in interval_1 AND ... AND interval_f
 ```
 
 Timestamps are hard eligibility conditions and never contribute to vector
-distance. All intervals are disjoint, normalized, and half-open `[start,end)`.
+distance. OR intervals are disjoint; AND intervals overlap and are resolved to
+their intersection. All bounds are half-open `[start,end)`.
 
 ## Dataset size and balanced design
 
 Generate 9,600 query records from the 10,000 held-out tweet vectors. Use a
-balanced factorial design with 20 records in each cell:
+balanced factorial design with 10 records in each operator-aware cell:
 
 | Factor | Levels |
 |---|---|
+| Boolean operator | OR, AND |
 | Temporal predicate count (`f`) | 1, 2, 3, 4 |
 | Total eligible time coverage | 1, 6, 24, 168, 720 hours |
 | Anchor traffic class | burst, ordinary, quiet |
 | Vector-space density | dense, medium-dense, medium-sparse, sparse |
 | Time/vector alignment | aligned, independent |
 
-This gives `4 * 5 * 3 * 4 * 2 * 20 = 9,600` records. Query vectors may be reused
+This gives `2 * 4 * 5 * 3 * 4 * 2 * 10 = 9,600` records. Query vectors may be reused
 across experimental cells, but the generator should minimize reuse and record a
 `query_reuse_number`. Repeated vectors are useful because they isolate the
 impact of changing temporal predicates.
@@ -41,18 +48,21 @@ The generator must use a fixed seed and deterministically shuffle final records.
 
 ### Predicate count and coverage
 
-`predicate_count` is the number of intervals joined by OR. Total temporal
-coverage is held constant when predicate count changes. For example, a 24-hour
-query contains:
+`predicate_count` is the number of intervals joined by the selected operator.
+Effective temporal coverage is held constant when predicate count changes. For
+OR, a 24-hour query contains:
 
 - one 24-hour interval;
 - two 12-hour intervals;
 - three 8-hour intervals; or
 - four 6-hour intervals.
 
-This isolates fragmentation from selectivity. Rounding is performed in integer
-milliseconds; the final interval receives any remainder so total requested
-coverage remains exact.
+For AND, predicates are overlapping supersets whose intersection is exactly the
+requested effective window. For example, `[00:00,36:00) AND [12:00,48:00)` has
+the effective interval `[12:00,36:00)`. Disjoint AND ranges are deliberately
+excluded because one timestamp cannot satisfy them and the result is empty.
+This design compares fragmentation/intersection structure while controlling
+effective coverage. Rounding uses integer milliseconds.
 
 ### Traffic classes
 

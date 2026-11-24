@@ -69,6 +69,31 @@ def normalize_intervals(intervals: Iterable[Iterable[int]]) -> list[tuple[int, i
     return merged
 
 
+def intersect_intervals(intervals: Iterable[Iterable[int]]) -> list[tuple[int, int]]:
+    """Return the intersection of half-open intervals for an AND predicate."""
+    values = [(int(start), int(end)) for start, end in intervals]
+    if any(start >= end for start, end in values):
+        raise ValueError("every interval must have start < end")
+    if not values:
+        return []
+    start = max(value[0] for value in values)
+    end = min(value[1] for value in values)
+    return [(start, end)] if start < end else []
+
+
+def resolve_intervals(
+    intervals: Iterable[Iterable[int]], operator: str = "OR"
+) -> list[tuple[int, int]]:
+    """Resolve an OR union or AND intersection to searchable intervals."""
+    values = list(intervals)
+    normalized_operator = operator.upper()
+    if normalized_operator == "OR":
+        return normalize_intervals(values)
+    if normalized_operator == "AND":
+        return intersect_intervals(values)
+    raise ValueError("predicate operator must be OR or AND")
+
+
 def interval_mask(timestamps: np.ndarray, intervals: Iterable[Iterable[int]]) -> np.ndarray:
     values = np.asarray(timestamps)
     mask = np.zeros(len(values), dtype=bool)

@@ -10,6 +10,7 @@ from temporal_ann.twitter_ann.workload import (
     intervals_are_valid,
     split_coverage_ms,
 )
+from temporal_ann.twitter_ann.bucketed import resolve_intervals
 from temporal_ann.twitter_data import YEAR_START_MS
 
 
@@ -38,6 +39,17 @@ class TwitterVariedWorkloadTests(unittest.TestCase):
         )
         self.assertTrue(intervals_are_valid(intervals, 24 * HOUR_MS))
         self.assertTrue(contains(intervals, self.query_time))
+
+    def test_and_predicates_overlap_with_exact_effective_coverage(self):
+        intervals = generate_intervals(
+            self.query_time, 4, 24, "ordinary", "aligned", self.pools,
+            np.random.default_rng(9), "AND",
+        )
+        self.assertEqual(len(intervals), 4)
+        self.assertTrue(intervals_are_valid(intervals, 24 * HOUR_MS, "AND"))
+        effective = resolve_intervals(intervals, "AND")
+        self.assertEqual(effective[0][1] - effective[0][0], 24 * HOUR_MS)
+        self.assertTrue(contains(effective, self.query_time))
 
     def test_independent_predicates_exclude_query_time(self):
         intervals = generate_intervals(
