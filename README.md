@@ -157,7 +157,7 @@ benchmark-twitter-hnsw-post-filter \
   --ef-search 256,512 --overfetch 10,50,100
 
 generate-twitter-varied-workload \
-  --records-per-cell 20 --clusters 64 --seed 7
+  --operators OR,AND --records-per-cell 10 --clusters 64 --seed 7
 ```
 
 The exact baseline uses an indexed DuckDB half-open timestamp range scan,
@@ -166,10 +166,13 @@ It also saves reusable top-k ground truth. The global HNSW baseline retrieves
 vector-nearest candidates first and then enforces the exact half-open timestamp
 predicate; its recall, completeness, graph-distance computations, and latency
 are measured against that ground truth. Generated ANN indexes and timestamp
-arrays are isolated in `Twitter_data/ann/`. The varied-workload generator
-creates 9,600 balanced queries spanning one to four OR predicates, five total
-coverage widths, burst/ordinary/quiet periods, aligned/independent time ranges,
-four vector-density strata, and 64 semantic clusters. See
+arrays are isolated in `Twitter_data/ann/`. The varied-workload generator creates 9,600 balanced queries: 4,800 interval-
+union (`OR`) queries and 4,800 overlapping interval-intersection (`AND`)
+queries. They span one to four predicates, five effective coverage widths,
+burst/ordinary/quiet periods, aligned/independent time ranges, four vector-
+density strata, and 64 semantic clusters. For `AND`, the stored predicates
+overlap and their intersection has the requested effective coverage; disjoint
+intervals would produce an empty single-timestamp predicate. See
 `Twitter_data/workloads/QUERY_DATASET_DESIGN.md` and `Twitter_data/README.md`
 for provenance, layout, limitations, and controls.
 
@@ -241,8 +244,9 @@ benchmark-twitter-rt-hnsw \
   --gateway-candidates 16 --gateway-seeds 4
 ```
 
-The workload balances 1, 6, 24, 168 and 720-hour coverage with one, two and
-four disjoint predicates. Build the equal-nominal-degree range-aware experiment
+The workload balances 1, 6, 24, 168 and 720-hour effective coverage with one,
+two and four predicates, split evenly between disjoint `OR` unions and
+overlapping `AND` intersections. Build the equal-nominal-degree range-aware experiment
 with 16 semantic and eight left/right temporal-compatible edges:
 
 ```bash

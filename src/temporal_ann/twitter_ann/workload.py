@@ -12,6 +12,7 @@ import faiss
 import numpy as np
 
 from ..twitter_data import YEAR_END_MS, YEAR_START_MS
+from .bucketed import resolve_intervals
 
 HOUR_MS = 3_600_000
 TRAFFIC_CLASSES = ("burst", "ordinary", "quiet")
@@ -39,20 +40,48 @@ def centered_interval(center_ms: int, width_ms: int) -> tuple[int, int]:
     return int(start), int(end)
 
 
-def intervals_are_valid(intervals: list[tuple[int, int]], expected_width_ms: int) -> bool:
+def intervals_are_valid(
+    intervals: list[tuple[int, int]], expected_width_ms: int, operator: str = "OR"
+) -> bool:
     if not intervals or any(start >= end for start, end in intervals):
         return False
     if intervals != sorted(intervals):
         return False
-    if intervals[0][0] < YEAR_START_MS or intervals[-1][1] > YEAR_END_MS:
+    if intervals[0][0] < YEAR_START_MS or max(end for _, end in intervals) > YEAR_END_MS:
         return False
-    if any(left[1] >= right[0] for left, right in zip(intervals, intervals[1:])):
-        return False
-    return sum(end - start for start, end in intervals) == expected_width_ms
+    normalized_operator = operator.upper()
+    if normalized_operator == "OR":
+        if any(left[1] >= right[0] for left, right in zip(intervals, intervals[1:])):
+            return False
+        return sum(end - start for start, end in intervals) == expected_width_ms
+    if normalized_operator == "AND":
+        effective = resolve_intervals(intervals, "AND")
+        return bool(effective) and effective[0][1] - effective[0][0] == expected_width_ms
+    return False
 
 
 def contains(intervals: list[tuple[int, int]], timestamp_ms: int) -> bool:
     return any(start <= timestamp_ms < end for start, end in intervals)
+
+
+def _and_intervals(base: tuple[int, int], predicate_count: int) -> list[tuple[int, int]]:
+    """Create overlapping predicates whose intersection is exactly ``base``."""
+    if predicate_count == 1:
+        return [base]
+    start, end = base
+    width = end - start
+    extension = max(HOUR_MS, width // max(2, predicate_count))
+    intervals = [
+        (start, min(YEAR_END_MS, end + extension)),
+        (max(YEAR_START_MS, start - extension), end),
+    ]
+    for position in range(2, predicate_count):
+        factor = position
+        intervals.append((
+            max(YEAR_START_MS, start - factor * extension),
+            min(YEAR_END_MS, end + (predicate_count - position) * extension),
+        ))
+    return sorted(intervals)
 
 
 def classify_hours(timestamps: np.ndarray) -> tuple[np.ndarray, dict[str, np.ndarray], dict[str, float]]:
@@ -91,10 +120,28 @@ def generate_intervals(
     alignment: str,
     anchor_pools: dict[str, np.ndarray],
     rng: np.random.Generator,
+    operator: str = "OR",
 ) -> list[tuple[int, int]]:
-    """Generate disjoint intervals while preserving exact total coverage."""
+    """Generate an OR union or an overlapping AND predicate.
+
+    ``total_hours`` is the effective union/intersection width, making OR and
+    AND records comparable after their Boolean predicate is resolved.
+    """
     if traffic_class not in TRAFFIC_CLASSES or alignment not in ALIGNMENTS:
         raise ValueError("unknown traffic class or alignment")
+    operator = operator.upper()
+    if operator not in {"OR", "AND"}:
+        raise ValueError("operator must be OR or AND")
+    if operator == "AND":
+        base = generate_intervals(
+            query_timestamp_ms, 1, total_hours, traffic_class, alignment,
+            anchor_pools, rng, "OR",
+        )[0]
+        intervals = _and_intervals(base, predicate_count)
+        if not intervals_are_valid(intervals, total_hours * HOUR_MS, "AND"):
+            raise RuntimeError("generated invalid AND intervals")
+        return intervals
+
     widths = split_coverage_ms(total_hours, predicate_count)
     intervals: list[tuple[int, int]] = []
     remaining = list(widths)
@@ -284,28 +331,34 @@ def generate(args: argparse.Namespace) -> tuple[list[dict[str, Any]], dict[str, 
     durations = [int(value) for value in args.coverage_hours.split(",") if value.strip()]
     if not durations or any(value <= 0 or value > 8760 for value in durations):
         raise ValueError("coverage-hours must contain valid positive durations")
+    operators = [value.strip().upper() for value in args.operators.split(",") if value.strip()]
+    if not operators or len(set(operators)) != len(operators) or any(
+        value not in {"OR", "AND"} for value in operators
+    ):
+        raise ValueError("operators must be a unique comma-separated subset of OR,AND")
     if args.records_per_cell <= 0 or args.k <= 0:
         raise ValueError("records-per-cell and k must be positive")
     sorted_timestamps = np.sort(np.asarray(timestamps))
     records: list[dict[str, Any]] = []
     cell_counts: Counter[tuple] = Counter()
     factors = itertools.product(
-        range(1, 5), durations, TRAFFIC_CLASSES, range(4), ALIGNMENTS
+        operators, range(1, 5), durations, TRAFFIC_CLASSES, range(4), ALIGNMENTS
     )
-    for predicate_count, total_hours, traffic_class, density, alignment in factors:
+    for operator, predicate_count, total_hours, traffic_class, density, alignment in factors:
         selected = selector.select_many(
             density, traffic_class, alignment, args.records_per_cell
         )
         for query_id in selected:
             intervals = generate_intervals(
                 int(query_timestamps[query_id]), predicate_count, total_hours,
-                traffic_class, alignment, anchor_pools, rng,
+                traffic_class, alignment, anchor_pools, rng, operator,
             )
-            eligible = _eligible_count(sorted_timestamps, intervals)
-            cell = (predicate_count, total_hours, traffic_class, density, alignment)
+            effective_intervals = resolve_intervals(intervals, operator)
+            eligible = _eligible_count(sorted_timestamps, effective_intervals)
+            cell = (operator, predicate_count, total_hours, traffic_class, density, alignment)
             cell_counts[cell] += 1
             records.append({
-                "schema_version": 1,
+                "schema_version": 2,
                 "workload_id": -1,
                 "query_id": query_id,
                 "query_source_key": source_keys[query_id],
@@ -313,13 +366,18 @@ def generate(args: argparse.Namespace) -> tuple[list[dict[str, Any]], dict[str, 
                 "query_reuse_number": int(selector.usage[query_id]),
                 "k": args.k,
                 "metric": "squared_l2",
-                "predicate_operator": "OR",
+                "predicate_operator": operator,
                 "predicate_count": predicate_count,
                 "requested_total_coverage_hours": total_hours,
                 "intervals": [[start, end] for start, end in intervals],
+                "effective_intervals": [
+                    [start, end] for start, end in effective_intervals
+                ],
                 "anchor_traffic_class": traffic_class,
                 "time_vector_alignment": alignment,
-                "native_timestamp_eligible": contains(intervals, int(query_timestamps[query_id])),
+                "native_timestamp_eligible": contains(
+                    effective_intervals, int(query_timestamps[query_id])
+                ),
                 "vector_density_class": DENSITY_CLASSES[density],
                 "vector_density_quartile": density,
                 "local_density_distance": float(spatial["local_density_distance"][query_id]),
@@ -339,14 +397,17 @@ def generate(args: argparse.Namespace) -> tuple[list[dict[str, Any]], dict[str, 
         # Final reuse count is more useful than assignment-time count.
         record["query_reuse_number"] = reuse[record["query_id"]]
 
-    expected_cells = 4 * len(durations) * len(TRAFFIC_CLASSES) * 4 * len(ALIGNMENTS)
+    expected_cells = (
+        len(operators) * 4 * len(durations) * len(TRAFFIC_CLASSES) * 4 * len(ALIGNMENTS)
+    )
     if len(cell_counts) != expected_cells or set(cell_counts.values()) != {args.records_per_cell}:
         raise RuntimeError("factorial workload is not balanced")
     summary = {
-        "schema_version": 1,
+        "schema_version": 2,
         "records": len(records),
         "factorial_cells": expected_cells,
         "records_per_cell": args.records_per_cell,
+        "predicate_operators": dict(Counter(x["predicate_operator"] for x in records)),
         "predicate_counts": dict(Counter(x["predicate_count"] for x in records)),
         "coverage_hours": dict(Counter(x["requested_total_coverage_hours"] for x in records)),
         "traffic_classes": dict(Counter(x["anchor_traffic_class"] for x in records)),
@@ -398,7 +459,10 @@ def parser() -> argparse.ArgumentParser:
     parser.add_argument("--centroids", type=Path, default=Path("Twitter_data/workloads/semantic_centroids.npy"))
     parser.add_argument("--config", type=Path, default=Path("Twitter_data/workloads/generation_config.json"))
     parser.add_argument("--coverage-hours", default="1,6,24,168,720")
-    parser.add_argument("--records-per-cell", type=int, default=20)
+    parser.add_argument("--operators", default="OR,AND",
+                        help="comma-separated Boolean temporal operators")
+    parser.add_argument("--records-per-cell", type=int, default=10,
+                        help="records per operator-aware factorial cell")
     parser.add_argument("--k", type=int, default=100)
     parser.add_argument("--neighbors", type=int, default=32)
     parser.add_argument("--spatial-ef-search", type=int, default=512)

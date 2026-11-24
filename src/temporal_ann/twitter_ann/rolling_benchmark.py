@@ -12,6 +12,7 @@ import numpy as np
 
 from ..exact_benchmark import percentile
 from ..oracle import exact_filtered_search
+from .bucketed import resolve_intervals
 from .rolling_hnsw import RollingSearchConfig, RollingTemporalHNSW
 
 HOUR_MS = 3_600_000
@@ -75,14 +76,46 @@ def make_intervals(
     return intervals
 
 
+def make_and_intervals(
+    timeline_start: int,
+    timeline_end: int,
+    coverage_hours: int,
+    predicate_count: int,
+    rng: np.random.Generator,
+) -> list[list[int]]:
+    """Generate overlapping intervals with the requested intersection width."""
+    base_start, base_end = make_intervals(
+        timeline_start, timeline_end, coverage_hours, 1, rng
+    )[0]
+    if predicate_count == 1:
+        return [[base_start, base_end]]
+    width = base_end - base_start
+    extension = max(HOUR_MS, width // max(2, predicate_count))
+    intervals = [
+        [base_start, min(timeline_end, base_end + extension)],
+        [max(timeline_start, base_start - extension), base_end],
+    ]
+    for position in range(2, predicate_count):
+        intervals.append([
+            max(timeline_start, base_start - position * extension),
+            min(timeline_end, base_end + (predicate_count - position) * extension),
+        ])
+    return sorted(intervals)
+
+
 def generate_workload(
     index: RollingTemporalHNSW,
     query_count: int,
     coverage_hours: list[int],
     fragment_counts: list[int],
     seed: int,
+    operators: list[str] | None = None,
 ) -> list[dict[str, Any]]:
-    cells = len(coverage_hours) * len(fragment_counts)
+    operators = operators or ["OR", "AND"]
+    operators = [value.upper() for value in operators]
+    if any(value not in {"OR", "AND"} for value in operators):
+        raise ValueError("operators must contain only OR and AND")
+    cells = len(operators) * len(coverage_hours) * len(fragment_counts)
     if query_count < cells or query_count % cells:
         raise ValueError("query_count must be a positive multiple of the workload cell count")
     per_cell = query_count // cells
@@ -92,26 +125,37 @@ def generate_workload(
     timeline_start = int(index.timestamps[0])
     timeline_end = int(index.timestamps[-1]) + 1
     position = 0
-    for width in coverage_hours:
-        for fragments in fragment_counts:
-            for _ in range(per_cell):
-                intervals = make_intervals(
-                    timeline_start, timeline_end, width, fragments, rng
-                )
-                components = index._components(intervals)
-                eligible_count = sum(right - left for _, _, left, right in components)
-                records.append({
-                    "workload_id": position,
-                    "query_id": int(query_order[position % len(query_order)]),
-                    "k": 100,
-                    "coverage_hours": width,
-                    "fragment_count": fragments,
-                    "intervals": intervals,
-                    "eligible_count": eligible_count,
-                    "actual_selectivity": eligible_count / len(index.global_ids),
-                    "seed": seed,
-                })
-                position += 1
+    for operator in operators:
+        for width in coverage_hours:
+            for fragments in fragment_counts:
+                for _ in range(per_cell):
+                    intervals = (
+                        make_intervals(timeline_start, timeline_end, width, fragments, rng)
+                        if operator == "OR"
+                        else make_and_intervals(
+                            timeline_start, timeline_end, width, fragments, rng
+                        )
+                    )
+                    effective_intervals = resolve_intervals(intervals, operator)
+                    components = index._components(effective_intervals)
+                    eligible_count = sum(
+                        right - left for _, _, left, right in components
+                    )
+                    records.append({
+                        "schema_version": 2,
+                        "workload_id": position,
+                        "query_id": int(query_order[position % len(query_order)]),
+                        "k": 100,
+                        "predicate_operator": operator,
+                        "coverage_hours": width,
+                        "fragment_count": fragments,
+                        "intervals": intervals,
+                        "effective_intervals": [list(value) for value in effective_intervals],
+                        "eligible_count": eligible_count,
+                        "actual_selectivity": eligible_count / len(index.global_ids),
+                        "seed": seed,
+                    })
+                    position += 1
     rng.shuffle(records)
     for workload_id, record in enumerate(records):
         record["workload_id"] = workload_id
@@ -130,7 +174,23 @@ def load_workload(path: Path) -> list[dict[str, Any]]:
         rows = [json.loads(line) for line in handle if line.strip()]
     if [row["workload_id"] for row in rows] != list(range(len(rows))):
         raise ValueError("workload IDs must be dense and ordered")
+    for row in rows:
+        operator = str(row.get("predicate_operator", "OR")).upper()
+        effective = resolve_intervals(row["intervals"], operator)
+        if not effective:
+            raise ValueError(f"workload {row['workload_id']} has an empty predicate")
+        if ("effective_intervals" in row and
+                [list(value) for value in effective] != row["effective_intervals"]):
+            raise ValueError(f"workload {row['workload_id']} effective intervals mismatch")
+        row["predicate_operator"] = operator
+        row["_effective_intervals"] = effective
     return rows
+
+
+def _record_intervals(record: dict[str, Any]) -> list[tuple[int, int]]:
+    return record.get("_effective_intervals") or resolve_intervals(
+        record["intervals"], record.get("predicate_operator", "OR")
+    )
 
 
 def generate_ground_truth(
@@ -147,7 +207,7 @@ def generate_ground_truth(
     for position, record in enumerate(workload):
         parts = [
             np.arange(left, right, dtype=np.int64)
-            for _, _, left, right in index._components(record["intervals"])
+            for _, _, left, right in index._components(_record_intervals(record))
         ]
         local_ids = np.concatenate(parts) if parts else np.empty(0, dtype=np.int64)
         eligible_global_ids = np.asarray(index.global_ids[local_ids], dtype=np.int64)
@@ -271,7 +331,7 @@ def benchmark(
         for position, record in enumerate(workload):
             result = index.search(
                 np.asarray(queries[record["query_id"]], dtype=np.float32),
-                record["intervals"],
+                _record_intervals(record),
                 config,
             )
             truth_ids = np.asarray(truth["neighbor_ids"][position], dtype=np.int64)
@@ -291,6 +351,7 @@ def benchmark(
                 "workload_id": record["workload_id"],
                 "query_id": record["query_id"],
                 "variant": variant,
+                "predicate_operator": record.get("predicate_operator", "OR"),
                 "coverage_hours": record["coverage_hours"],
                 "fragment_count": record["fragment_count"],
                 "eligible_count": record["eligible_count"],
@@ -348,6 +409,7 @@ def benchmark(
     slices: dict[tuple[str, str, int], list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
         by_variant[row["variant"]].append(row)
+        slices[(row["variant"], "predicate_operator", row["predicate_operator"])].append(row)
         slices[(row["variant"], "coverage_hours", row["coverage_hours"])].append(row)
         slices[(row["variant"], "fragment_count", row["fragment_count"])].append(row)
     summary = {
@@ -386,6 +448,7 @@ def generation_parser() -> argparse.ArgumentParser:
     parser.add_argument("--query-count", type=int, default=900)
     parser.add_argument("--coverage-hours", default="1,6,24,168,720")
     parser.add_argument("--fragment-counts", default="1,2,4")
+    parser.add_argument("--operators", default="OR,AND")
     parser.add_argument("--seed", type=int, default=19)
     parser.add_argument("--block-size", type=int, default=65_536)
     parser.add_argument("--progress-every", type=int, default=100)
@@ -420,6 +483,7 @@ def generate_main() -> None:
     workload = generate_workload(
         index, args.query_count, parse_ints(args.coverage_hours),
         parse_ints(args.fragment_counts), args.seed,
+        [value.strip() for value in args.operators.split(",") if value.strip()],
     )
     write_workload(args.workload, workload)
     generate_ground_truth(

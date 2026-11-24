@@ -1,0 +1,381 @@
+{
+  "method": "exact temporal pre-filter plus blocked squared L2",
+  "configuration": {
+    "block_size": 65536,
+    "workload": "Twitter_data/workloads/temporal_vector_queries_9600_mixed.jsonl"
+  },
+  "measurements": 9600,
+  "overall": {
+    "queries": 9600,
+    "mean_total_latency_ms": 12.257497222916667,
+    "mean_candidates_examined": 21859.615208333333,
+    "complete_result_rate": 0.9341666666666667,
+    "p50_total_latency_ms": 1.77625,
+    "p95_total_latency_ms": 49.61773749999999
+  },
+  "configuration_groups": [],
+  "factor_slices": [
+    {
+      "dimension": "predicate_operator",
+      "value": "AND",
+      "queries": 4800,
+      "mean_total_latency_ms": 12.367206359375002,
+      "mean_candidates_examined": 21629.163541666665,
+      "complete_result_rate": 0.9347916666666667,
+      "p50_total_latency_ms": 1.7660835000000001,
+      "p95_total_latency_ms": 49.40090835
+    },
+    {
+      "dimension": "predicate_operator",
+      "value": "OR",
+      "queries": 4800,
+      "mean_total_latency_ms": 12.147788086458332,
+      "mean_candidates_examined": 22090.066875,
+      "complete_result_rate": 0.9335416666666667,
+      "p50_total_latency_ms": 1.7806875,
+      "p95_total_latency_ms": 49.93352050000001
+    },
+    {
+      "dimension": "predicate_count",
+      "value": 1,
+      "queries": 2400,
+      "mean_total_latency_ms": 12.150661699166667,
+      "mean_candidates_examined": 21803.61375,
+      "complete_result_rate": 0.9370833333333334,
+      "p50_total_latency_ms": 1.776396,
+      "p95_total_latency_ms": 49.61703959999998
+    },
+    {
+      "dimension": "predicate_count",
+      "value": 2,
+      "queries": 2400,
+      "mean_total_latency_ms": 12.570943232083334,
+      "mean_candidates_examined": 21638.574166666665,
+      "complete_result_rate": 0.93125,
+      "p50_total_latency_ms": 1.7338335,
+      "p95_total_latency_ms": 48.62474345
+    },
+    {
+      "dimension": "predicate_count",
+      "value": 3,
+      "queries": 2400,
+      "mean_total_latency_ms": 12.09097114375,
+      "mean_candidates_examined": 21998.5975,
+      "complete_result_rate": 0.9333333333333333,
+      "p50_total_latency_ms": 1.7945,
+      "p95_total_latency_ms": 50.191111899999996
+    },
+    {
+      "dimension": "predicate_count",
+      "value": 4,
+      "queries": 2400,
+      "mean_total_latency_ms": 12.217412816666666,
+      "mean_candidates_examined": 21997.675416666665,
+      "complete_result_rate": 0.935,
+      "p50_total_latency_ms": 1.7867085,
+      "p95_total_latency_ms": 50.1716458
+    },
+    {
+      "dimension": "coverage_hours",
+      "value": 1,
+      "queries": 1920,
+      "mean_total_latency_ms": 0.18146885364583332,
+      "mean_candidates_examined": 150.66875,
+      "complete_result_rate": 0.6708333333333333,
+      "p50_total_latency_ms": 0.1555625,
+      "p95_total_latency_ms": 0.38767739999999995
+    },
+    {
+      "dimension": "coverage_hours",
+      "value": 168,
+      "queries": 1920,
+      "mean_total_latency_ms": 12.054877103645833,
+      "mean_candidates_examined": 20784.863020833334,
+      "complete_result_rate": 1.0,
+      "p50_total_latency_ms": 11.3213335,
+      "p95_total_latency_ms": 18.1094253
+    },
+    {
+      "dimension": "coverage_hours",
+      "value": 24,
+      "queries": 1920,
+      "mean_total_latency_ms": 2.0055155114583334,
+      "mean_candidates_examined": 3302.2265625,
+      "complete_result_rate": 1.0,
+      "p50_total_latency_ms": 1.7491875000000001,
+      "p95_total_latency_ms": 3.1901645999999997
+    },
+    {
+      "dimension": "coverage_hours",
+      "value": 6,
+      "queries": 1920,
+      "mean_total_latency_ms": 0.6222099026041668,
+      "mean_candidates_examined": 900.3119791666667,
+      "complete_result_rate": 1.0,
+      "p50_total_latency_ms": 0.536479,
+      "p95_total_latency_ms": 1.1878
+    },
+    {
+      "dimension": "coverage_hours",
+      "value": 720,
+      "queries": 1920,
+      "mean_total_latency_ms": 46.42341474322916,
+      "mean_candidates_examined": 84160.00572916666,
+      "complete_result_rate": 1.0,
+      "p50_total_latency_ms": 44.5031035,
+      "p95_total_latency_ms": 56.2992455
+    },
+    {
+      "dimension": "traffic_class",
+      "value": "burst",
+      "queries": 3200,
+      "mean_total_latency_ms": 13.4420853953125,
+      "mean_candidates_examined": 24589.295625,
+      "complete_result_rate": 1.0,
+      "p50_total_latency_ms": 2.5760625,
+      "p95_total_latency_ms": 52.81374164999999
+    },
+    {
+      "dimension": "traffic_class",
+      "value": "ordinary",
+      "queries": 3200,
+      "mean_total_latency_ms": 12.403653685937499,
+      "mean_candidates_examined": 21405.8103125,
+      "complete_result_rate": 0.9946875,
+      "p50_total_latency_ms": 1.7218955,
+      "p95_total_latency_ms": 48.8837569
+    },
+    {
+      "dimension": "traffic_class",
+      "value": "quiet",
+      "queries": 3200,
+      "mean_total_latency_ms": 10.9267525875,
+      "mean_candidates_examined": 19583.7396875,
+      "complete_result_rate": 0.8078125,
+      "p50_total_latency_ms": 1.3294165,
+      "p95_total_latency_ms": 44.55920205
+    },
+    {
+      "dimension": "vector_density_class",
+      "value": "dense",
+      "queries": 2400,
+      "mean_total_latency_ms": 12.774256587083334,
+      "mean_candidates_examined": 21802.5975,
+      "complete_result_rate": 0.9345833333333333,
+      "p50_total_latency_ms": 1.7974999999999999,
+      "p95_total_latency_ms": 49.49430174999998
+    },
+    {
+      "dimension": "vector_density_class",
+      "value": "medium_dense",
+      "queries": 2400,
+      "mean_total_latency_ms": 11.954703652083333,
+      "mean_candidates_examined": 21814.613333333335,
+      "complete_result_rate": 0.9320833333333334,
+      "p50_total_latency_ms": 1.7474585,
+      "p95_total_latency_ms": 49.167150649999975
+    },
+    {
+      "dimension": "vector_density_class",
+      "value": "medium_sparse",
+      "queries": 2400,
+      "mean_total_latency_ms": 12.18286474625,
+      "mean_candidates_examined": 21851.5925,
+      "complete_result_rate": 0.9345833333333333,
+      "p50_total_latency_ms": 1.784917,
+      "p95_total_latency_ms": 49.93951459999999
+    },
+    {
+      "dimension": "vector_density_class",
+      "value": "sparse",
+      "queries": 2400,
+      "mean_total_latency_ms": 12.11816390625,
+      "mean_candidates_examined": 21969.6575,
+      "complete_result_rate": 0.9354166666666667,
+      "p50_total_latency_ms": 1.7440415,
+      "p95_total_latency_ms": 49.788945850000005
+    },
+    {
+      "dimension": "time_vector_alignment",
+      "value": "aligned",
+      "queries": 4800,
+      "mean_total_latency_ms": 12.128165144999999,
+      "mean_candidates_examined": 21942.353958333333,
+      "complete_result_rate": 0.9354166666666667,
+      "p50_total_latency_ms": 1.7975415,
+      "p95_total_latency_ms": 49.79542115
+    },
+    {
+      "dimension": "time_vector_alignment",
+      "value": "independent",
+      "queries": 4800,
+      "mean_total_latency_ms": 12.386829300833334,
+      "mean_candidates_examined": 21776.876458333332,
+      "complete_result_rate": 0.9329166666666666,
+      "p50_total_latency_ms": 1.7558129999999998,
+      "p95_total_latency_ms": 49.40524405000001
+    }
+  ],
+  "predicate_density_interactions": [
+    {
+      "predicate_count": 1,
+      "vector_density_class": "dense",
+      "queries": 600,
+      "mean_total_latency_ms": 11.883861630000002,
+      "mean_candidates_examined": 21465.008333333335,
+      "complete_result_rate": 0.9383333333333334,
+      "p50_total_latency_ms": 1.7747709999999999,
+      "p95_total_latency_ms": 48.20069199999998
+    },
+    {
+      "predicate_count": 1,
+      "vector_density_class": "medium_dense",
+      "queries": 600,
+      "mean_total_latency_ms": 11.937560435,
+      "mean_candidates_examined": 21906.368333333332,
+      "complete_result_rate": 0.9333333333333333,
+      "p50_total_latency_ms": 1.7702295000000001,
+      "p95_total_latency_ms": 49.80913124999999
+    },
+    {
+      "predicate_count": 1,
+      "vector_density_class": "medium_sparse",
+      "queries": 600,
+      "mean_total_latency_ms": 12.711522725000002,
+      "mean_candidates_examined": 21950.496666666666,
+      "complete_result_rate": 0.94,
+      "p50_total_latency_ms": 1.773333,
+      "p95_total_latency_ms": 50.470372899999994
+    },
+    {
+      "predicate_count": 1,
+      "vector_density_class": "sparse",
+      "queries": 600,
+      "mean_total_latency_ms": 12.069702006666668,
+      "mean_candidates_examined": 21892.581666666665,
+      "complete_result_rate": 0.9366666666666666,
+      "p50_total_latency_ms": 1.7811465,
+      "p95_total_latency_ms": 49.617074999999986
+    },
+    {
+      "predicate_count": 2,
+      "vector_density_class": "dense",
+      "queries": 600,
+      "mean_total_latency_ms": 14.60146133166667,
+      "mean_candidates_examined": 21644.711666666666,
+      "complete_result_rate": 0.9316666666666666,
+      "p50_total_latency_ms": 1.7330625,
+      "p95_total_latency_ms": 49.46172145
+    },
+    {
+      "predicate_count": 2,
+      "vector_density_class": "medium_dense",
+      "queries": 600,
+      "mean_total_latency_ms": 11.909418676666668,
+      "mean_candidates_examined": 21765.176666666666,
+      "complete_result_rate": 0.9316666666666666,
+      "p50_total_latency_ms": 1.7342295,
+      "p95_total_latency_ms": 48.48022914999999
+    },
+    {
+      "predicate_count": 2,
+      "vector_density_class": "medium_sparse",
+      "queries": 600,
+      "mean_total_latency_ms": 11.900198261666668,
+      "mean_candidates_examined": 21608.131666666668,
+      "complete_result_rate": 0.9283333333333333,
+      "p50_total_latency_ms": 1.7421665,
+      "p95_total_latency_ms": 48.20828784999998
+    },
+    {
+      "predicate_count": 2,
+      "vector_density_class": "sparse",
+      "queries": 600,
+      "mean_total_latency_ms": 11.872694658333334,
+      "mean_candidates_examined": 21536.27666666667,
+      "complete_result_rate": 0.9333333333333333,
+      "p50_total_latency_ms": 1.7072295,
+      "p95_total_latency_ms": 48.03249549999999
+    },
+    {
+      "predicate_count": 3,
+      "vector_density_class": "dense",
+      "queries": 600,
+      "mean_total_latency_ms": 12.135556376666667,
+      "mean_candidates_examined": 22120.648333333334,
+      "complete_result_rate": 0.9316666666666666,
+      "p50_total_latency_ms": 1.841396,
+      "p95_total_latency_ms": 50.77858929999999
+    },
+    {
+      "predicate_count": 3,
+      "vector_density_class": "medium_dense",
+      "queries": 600,
+      "mean_total_latency_ms": 11.949030898333332,
+      "mean_candidates_examined": 21814.865,
+      "complete_result_rate": 0.9316666666666666,
+      "p50_total_latency_ms": 1.7985829999999998,
+      "p95_total_latency_ms": 48.92156904999999
+    },
+    {
+      "predicate_count": 3,
+      "vector_density_class": "medium_sparse",
+      "queries": 600,
+      "mean_total_latency_ms": 11.935007858333332,
+      "mean_candidates_examined": 21741.69,
+      "complete_result_rate": 0.935,
+      "p50_total_latency_ms": 1.763208,
+      "p95_total_latency_ms": 49.31874134999999
+    },
+    {
+      "predicate_count": 3,
+      "vector_density_class": "sparse",
+      "queries": 600,
+      "mean_total_latency_ms": 12.344289441666666,
+      "mean_candidates_examined": 22317.18666666667,
+      "complete_result_rate": 0.935,
+      "p50_total_latency_ms": 1.7440415,
+      "p95_total_latency_ms": 50.7681979
+    },
+    {
+      "predicate_count": 4,
+      "vector_density_class": "dense",
+      "queries": 600,
+      "mean_total_latency_ms": 12.476147009999998,
+      "mean_candidates_examined": 21980.021666666667,
+      "complete_result_rate": 0.9366666666666666,
+      "p50_total_latency_ms": 1.7894375,
+      "p95_total_latency_ms": 49.81734134999998
+    },
+    {
+      "predicate_count": 4,
+      "vector_density_class": "medium_dense",
+      "queries": 600,
+      "mean_total_latency_ms": 12.022804598333332,
+      "mean_candidates_examined": 21772.043333333335,
+      "complete_result_rate": 0.9316666666666666,
+      "p50_total_latency_ms": 1.7676669999999999,
+      "p95_total_latency_ms": 49.63230835
+    },
+    {
+      "predicate_count": 4,
+      "vector_density_class": "medium_sparse",
+      "queries": 600,
+      "mean_total_latency_ms": 12.18473014,
+      "mean_candidates_examined": 22106.051666666666,
+      "complete_result_rate": 0.935,
+      "p50_total_latency_ms": 1.854438,
+      "p95_total_latency_ms": 51.08991605
+    },
+    {
+      "predicate_count": 4,
+      "vector_density_class": "sparse",
+      "queries": 600,
+      "mean_total_latency_ms": 12.185969518333335,
+      "mean_candidates_examined": 22132.585,
+      "complete_result_rate": 0.9366666666666666,
+      "p50_total_latency_ms": 1.717479,
+      "p95_total_latency_ms": 50.01252079999999
+    }
+  ]
+}

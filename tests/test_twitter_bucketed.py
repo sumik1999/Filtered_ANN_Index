@@ -15,6 +15,7 @@ from temporal_ann.twitter_ann.bucketed import (
     eligible_ids_from_sorted,
     make_boundaries,
     normalize_intervals,
+    resolve_intervals,
 )
 
 
@@ -29,6 +30,13 @@ class TwitterBucketedTests(unittest.TestCase):
 
     def test_normalizes_interval_union(self):
         self.assertEqual(normalize_intervals([[20, 30], [10, 20], [40, 50]]), [(10, 30), (40, 50)])
+
+    def test_resolves_and_intersection(self):
+        self.assertEqual(
+            resolve_intervals([[1000, 4000], [1500, 3500], [2000, 4500]], "AND"),
+            [(2000, 3500)],
+        )
+        self.assertEqual(resolve_intervals([[1000, 2000], [3000, 4000]], "AND"), [])
 
     def test_fixed_and_density_boundaries_assign_every_record_once(self):
         for strategy in ("fixed", "density"):

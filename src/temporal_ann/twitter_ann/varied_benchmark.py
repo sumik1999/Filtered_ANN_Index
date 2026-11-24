@@ -24,6 +24,7 @@ from .bucketed import (
     eligible_ids_from_sorted,
     interval_mask,
     normalize_intervals,
+    resolve_intervals,
 )
 from .hnsw import parse_ints
 
@@ -34,10 +35,27 @@ def load_workload(path: Path) -> list[dict[str, Any]]:
     if not rows or [row["workload_id"] for row in rows] != list(range(len(rows))):
         raise ValueError("workload IDs must be non-empty, dense, and ordered")
     for row in rows:
-        normalized = normalize_intervals(row["intervals"])
-        if len(normalized) != row["predicate_count"]:
-            raise ValueError(f"workload {row['workload_id']} has overlapping predicates")
+        operator = str(row.get("predicate_operator", "OR")).upper()
+        raw = row["intervals"]
+        if len(raw) != row["predicate_count"]:
+            raise ValueError(f"workload {row['workload_id']} predicate count mismatch")
+        effective = resolve_intervals(raw, operator)
+        if operator == "OR" and len(normalize_intervals(raw)) != len(raw):
+            raise ValueError(f"workload {row['workload_id']} has overlapping OR predicates")
+        if not effective:
+            raise ValueError(f"workload {row['workload_id']} has an empty {operator} predicate")
+        if ("effective_intervals" in row and
+                [list(value) for value in effective] != row["effective_intervals"]):
+            raise ValueError(f"workload {row['workload_id']} effective intervals mismatch")
+        row["predicate_operator"] = operator
+        row["_effective_intervals"] = effective
     return rows
+
+
+def _intervals(record: dict[str, Any]) -> list[tuple[int, int]]:
+    return record.get("_effective_intervals") or resolve_intervals(
+        record["intervals"], record.get("predicate_operator", "OR")
+    )
 
 
 def _write_json(path: Path, value: Any) -> None:
@@ -57,6 +75,7 @@ def _write_rows(path: Path, rows: list[dict[str, Any]]) -> None:
 def _base_row(record: dict[str, Any]) -> dict[str, Any]:
     return {
         "workload_id": record["workload_id"], "query_id": record["query_id"],
+        "predicate_operator": record.get("predicate_operator", "OR"),
         "predicate_count": record["predicate_count"],
         "coverage_hours": record["requested_total_coverage_hours"],
         "traffic_class": record["anchor_traffic_class"],
@@ -95,7 +114,7 @@ def _aggregate(members: list[dict[str, Any]]) -> dict[str, Any]:
 
 def summarize(rows: list[dict[str, Any]], method: str, configuration: dict[str, Any]) -> dict[str, Any]:
     dimensions = (
-        "predicate_count", "coverage_hours", "traffic_class",
+        "predicate_operator", "predicate_count", "coverage_hours", "traffic_class",
         "vector_density_class", "time_vector_alignment",
     )
     slices = []
@@ -143,7 +162,7 @@ def run_exact(args: argparse.Namespace) -> tuple[list[dict[str, Any]], dict[str,
     for position, record in enumerate(workload):
         started = time.perf_counter_ns()
         filter_started = time.perf_counter_ns()
-        eligible = eligible_ids_from_sorted(sorted_times, sorted_ids, record["intervals"])
+        eligible = eligible_ids_from_sorted(sorted_times, sorted_ids, _intervals(record))
         filter_ms = (time.perf_counter_ns() - filter_started) / 1e6
         search_started = time.perf_counter_ns()
         ids, distances = exact_filtered_search(
@@ -203,7 +222,7 @@ def run_global(args: argparse.Namespace) -> tuple[list[dict[str, Any]], dict[str
         for overfetch in parse_ints(args.overfetch):
             for position, record in enumerate(workload):
                 result = _global_search(index, queries[record["query_id"]], timestamps,
-                                        record["intervals"], record["k"], overfetch, ef_search)
+                                        _intervals(record), record["k"], overfetch, ef_search)
                 rows.append({**_base_row(record), "ef_search": ef_search,
                              "effective_ef_search": result["effective_ef_search"],
                              "overfetch": overfetch, "result_count": len(result["ids"]),
@@ -215,7 +234,7 @@ def run_global(args: argparse.Namespace) -> tuple[list[dict[str, Any]], dict[str
                              "recall_at_k": recall(result["ids"], truth["neighbor_ids"][position], record["k"])})
             print(f"varied global ef={ef_search} overfetch={overfetch} complete", flush=True)
     _write_rows(args.output / "queries.csv", rows)
-    summary = summarize(rows, "global HNSW plus interval-union post-filter",
+    summary = summarize(rows, "global HNSW plus resolved OR/AND temporal post-filter",
                         {"ef_search": parse_ints(args.ef_search), "overfetch": parse_ints(args.overfetch)})
     _write_json(args.output / "summary.json", summary); return rows, summary
 
@@ -265,7 +284,7 @@ def run_bucket(args: argparse.Namespace) -> tuple[list[dict[str, Any]], dict[str
                     configuration_started = time.perf_counter()
                     for position, record in enumerate(workload):
                         result = bucket_index.search(queries[record["query_id"]], timestamps, vectors,
-                                                     record["intervals"], record["k"], config)
+                                                     _intervals(record), record["k"], config)
                         rows.append({**_base_row(record), "bucket_strategy": strategy,
                                      "bucket_count": count, "ef_search": ef_search,
                                      "overfetch": overfetch, "result_count": len(result["ids"]),
@@ -314,20 +333,21 @@ def run_adaptive(args: argparse.Namespace) -> tuple[list[dict[str, Any]], dict[s
     bucket_config = BucketSearchConfig(args.ef_search, args.overfetch, args.boundary_safety)
     rows = []
     for position, record in enumerate(workload):
-        plan_started = time.perf_counter_ns(); method, estimate = planner.choose(record["intervals"])
+        effective_intervals = _intervals(record)
+        plan_started = time.perf_counter_ns(); method, estimate = planner.choose(effective_intervals)
         planner_ms = (time.perf_counter_ns() - plan_started) / 1e6
         if method == "exact_pre_filter":
             started = time.perf_counter_ns()
-            eligible = eligible_ids_from_sorted(sorted_times, sorted_ids, record["intervals"])
+            eligible = eligible_ids_from_sorted(sorted_times, sorted_ids, effective_intervals)
             ids, distances = exact_filtered_search(vectors, queries[record["query_id"]], eligible, record["k"], args.block_size)
             execution_ms = (time.perf_counter_ns() - started) / 1e6; candidates = len(eligible)
         elif method == "bucket_hnsw":
             result = bucket_index.search(queries[record["query_id"]], timestamps, vectors,
-                                         record["intervals"], record["k"], bucket_config)
+                                         effective_intervals, record["k"], bucket_config)
             ids, distances, execution_ms, candidates = result["ids"], result["distances"], result["total_ms"], result["candidates_requested"]
         else:
             result = _global_search(global_index, queries[record["query_id"]], timestamps,
-                                    record["intervals"], record["k"], args.overfetch, args.ef_search)
+                                    effective_intervals, record["k"], args.overfetch, args.ef_search)
             ids, distances, execution_ms, candidates = result["ids"], result["distances"], result["total_ms"], result["candidates_examined"]
         rows.append({**_base_row(record), "chosen_method": method,
                      "selected_bucket_count": estimate["selected_bucket_count"],
